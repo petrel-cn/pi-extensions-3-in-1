@@ -1,0 +1,13 @@
+{
+  "name": "@petrel-cn/pi-status",
+  "version": "1.1.0",
+  "description": "Expose pi's live running state as machine-readable JSON, for a desktop floating window.",
+  "keywords": ["pi-package", "pi", "status", "floating-window", "overlay"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

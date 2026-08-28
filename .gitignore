@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Local runtime state (must not be committed)
+**/config.json
+**/state.json
+
+# Logs / temp
+*.log
+.DS_Store
+dist/

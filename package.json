@@ -1,0 +1,16 @@
+{
+  "name": "pi-extensions",
+  "version": "1.0.0",
+  "description": "A collection of pi extensions: balance, workspace-guard, pi-status, plus the pi-status-window companion app.",
+  "keywords": ["pi-package", "pi", "extensions"],
+  "license": "MIT",
+  "private": false,
+  "workspaces": ["balance", "workspace-guard", "pi-status"],
+  "pi": {
+    "extensions": [
+      "./balance/index.ts",
+      "./workspace-guard/index.ts",
+      "./pi-status/index.ts"
+    ]
+  }
+}

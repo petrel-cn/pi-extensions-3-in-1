@@ -1,0 +1,14 @@
+{
+  "name": "@petrel-cn/balance",
+  "version": "1.5.0",
+  "description": "Show the current model provider's account balance in the pi footer.",
+  "keywords": ["pi-package", "pi", "balance", "footer", "account"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
