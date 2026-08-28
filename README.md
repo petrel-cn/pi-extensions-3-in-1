@@ -15,10 +15,11 @@
 
 ## Install
 
-**Git (whole set):**
+**Git or npm (whole set):**
 
 ```bash
 pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install npm:@petrel-cn/pi-extensions
 ```
 
 **npm (per component):**

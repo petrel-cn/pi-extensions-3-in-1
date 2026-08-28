@@ -15,10 +15,11 @@
 
 ## 安装
 
-**Git（整套）：**
+**Git 或 npm（整套）：**
 
 ```bash
 pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install npm:@petrel-cn/pi-extensions
 ```
 
 **npm（按组件）：**
