@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-29
+
+### Fixed
+
+- **Transient rename failure while the floating window polls the state file** — the window reads `%TEMP%/pi-balance.json` every 300 ms, and .NET's `File.ReadAllText` opens it without delete sharing, so an overwriting rename could fail for the duration of that read window (tens of microseconds). `writeBalanceState` now retries the rename up to three times with a short backoff (`EPERM` / `EACCES` / `EBUSY` / `ENOENT`; delays of 3/10/25 ms through a synchronous `Atomics.wait` sleep, rewriting the temp file on each attempt) and removes a leftover `.tmp` before reporting a permanent failure.
+
 ## [1.5.0] - 2026-08-29
 
 ### Added
@@ -54,11 +60,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - **Auth** — API key resolved via `ctx.modelRegistry.getProviderAuth`, never hard-coded.
 - **Styling** — failed queries show a warning-colored message; no key / unsupported provider shows `💰 N/A`.
 - **Documentation** — bilingual (Chinese/English) source comments.
-
-[Unreleased]: https://example.com/balance/compare/v1.5.0...HEAD
-[1.5.0]: https://example.com/balance/compare/v1.4.0...v1.5.0
-[1.4.0]: https://example.com/balance/compare/v1.3.0...v1.4.0
-[1.3.0]: https://example.com/balance/compare/v1.2.0...v1.3.0
-[1.2.0]: https://example.com/balance/compare/v1.1.0...v1.2.0
-[1.1.0]: https://example.com/balance/compare/v1.0.0...v1.1.0
-[1.0.0]: https://example.com/balance/releases/tag/v1.0.0

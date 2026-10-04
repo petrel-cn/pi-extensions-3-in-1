@@ -1,4 +1,4 @@
-# pi-extensions
+# pi-extensions-3-in-1
 
 > A collection of pi extensions and a companion desktop app, built for [pi](https://github.com/earendil-works/pi-coding-agent).
 
@@ -18,7 +18,7 @@
 **Git or npm (whole set):**
 
 ```bash
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 pi install npm:@petrel-cn/pi-extensions
 ```
 

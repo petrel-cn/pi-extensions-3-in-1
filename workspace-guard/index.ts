@@ -1,6 +1,8 @@
 /**
  * Workspace Guard Extension —— 将写文件操作硬性约束在当前工作区内
  *
+ * 版本：v2.6（与 CHANGELOG.md 顶部一致）
+ *
  * 行为：
  *  - write / edit 工具：目标路径必须在工作区（会话 cwd）内，否则弹出审批；
  *    拒绝则拦截（block），工作区外写入不会执行。
@@ -21,6 +23,11 @@
  * 配置（环境变量）：
  *  - PI_ALLOW_WRITE_DIRS：额外允许写入的目录（多个用系统路径分隔符分隔，Windows 为 ;）
  *
+ * 配置（config.json，与扩展同目录）：
+ *  - language：界面语言（zh|en）
+ *  - llmExtraRules：字符串数组，逐条追加到危险命令审计提示词，用于附加审计规则
+ *    （例如本地/私有的路径豁免），缺省或为空时不追加任何内容。
+ *
  * 安装位置：~/.pi/agent/extensions/workspace-guard/ （/reload 后生效）
  */
 
@@ -33,9 +40,11 @@ import {
   extractWriteTargets,
   DANGEROUS_PATTERNS,
   explainCommand,
+  clampLines,
+  clampChars,
   type Lang,
 } from "./core.ts";
-import { getLanguage, setLanguage, t } from "./i18n.ts";
+import { getLanguage, setLanguage, t, readConfig } from "./i18n.ts";
 
 const EXT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = path.join(EXT_DIR, "state.json");
@@ -61,8 +70,35 @@ interface LlmExplanation {
 }
 const llmExplanationCache = new Map<string, LlmExplanation>();
 
-/** LLM 系统提示词：按语言生成，中文要求输出 低/中/高，英文要求 low/medium/high。 */
+/**
+ * 读取 config.json 中的附加审计规则（llmExtraRules）。
+ * 容错：字段缺失、类型不符、空串一律忽略；读取失败返回空数组。
+ */
+function extraAuditRules(): string[] {
+  const value = readConfig().llmExtraRules;
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+/**
+ * 拼接系统提示词：基础提示词 + config.json 中的附加审计规则。
+ * 附加规则放在末尾并单独成节，冲突时以该节为准（便于覆盖默认的风险判断口径）。
+ */
 function llmSystemPrompt(lang: Lang): string {
+  const extra = extraAuditRules();
+  if (extra.length === 0) return llmBasePrompt(lang);
+  const header =
+    lang === "zh"
+      ? "附加审计规则（与本提示词其他部分冲突时，以本节为准）："
+      : "Additional audit rules (take precedence over the rest of this prompt on conflict):";
+  return [llmBasePrompt(lang), header, ...extra.map((rule) => `- ${rule}`)].join("\n");
+}
+
+/** 基础系统提示词：按语言生成，中文要求输出 低/中/高，英文要求 low/medium/high。 */
+function llmBasePrompt(lang: Lang): string {
   if (lang === "zh") {
     return [
       "你是 bash 命令安全审计专家。用户给你一条待审批的 bash 命令，请客观分析并输出严格 JSON（不要输出 JSON 以外的任何内容）：",
@@ -153,6 +189,51 @@ async function explainWithLlm(command: string, ctx: ExtensionContext): Promise<L
     /* LLM 失败/超时 → 调用方降级本地模板 */
   }
   return undefined;
+}
+
+// ---------- 审批框内容裁剪（固定策略，不依赖终端尺寸） ----------
+
+/** 命令预览与目标路径列表：行数 ≤ 20 全部显示；≥ 21 显示「首 16 行 + 省略标记 + 尾 3 行」（总计 20 行）。 */
+const PREVIEW_FULL_MAX_LINES = 20;
+const PREVIEW_HEAD_LINES = 16;
+const PREVIEW_TAIL_LINES = 3;
+
+/**
+ * 说明类长文本（LLM 说明 / 本地模板说明）的字符上限：仅作为安全阀。
+ * 正常情况下 LLM 说明约 200～400 字，远低于此值，不会被截断；
+ * 只有异常超长（上千字）时才截断并加 `…`，以免对话框无限变高。
+ * 注意：不做任何人工折行，换行交给终端按窗口宽度自动处理。
+ */
+const PROSE_MAX_CHARS = 1000;
+
+/** 审批框内的省略标记文案（本地化）。 */
+function omittedLines(n: number): string {
+  return t("clamp.omittedLines", { n: String(n) });
+}
+
+/** 命令预览：按固定 16+3 策略裁剪（20 行及以内全部显示）。 */
+function previewCommand(command: string): string {
+  return clampLines(command, {
+    fullMaxLines: PREVIEW_FULL_MAX_LINES,
+    headLines: PREVIEW_HEAD_LINES,
+    tailLines: PREVIEW_TAIL_LINES,
+    marker: omittedLines,
+  });
+}
+
+/** 目标路径列表：与命令预览同一策略，标记文案改为「另有 N 个目标未显示」。 */
+function previewPaths(paths: string[]): string {
+  return clampLines(paths.join("\n"), {
+    fullMaxLines: PREVIEW_FULL_MAX_LINES,
+    headLines: PREVIEW_HEAD_LINES,
+    tailLines: PREVIEW_TAIL_LINES,
+    marker: (n) => t("clamp.omittedTargets", { n: String(n) }),
+  });
+}
+
+/** 说明类长文本：仅按字符数封顶，不折行（换行交给终端）。 */
+function previewProse(text: string): string {
+  return clampChars(text, PROSE_MAX_CHARS);
 }
 
 /**
@@ -317,7 +398,9 @@ export default function (pi: ExtensionAPI) {
             explanation = llm.explanation;
             const icon = llm.risk === "high" ? "🔴" : llm.risk === "medium" ? "🟡" : "🟢";
             const risk = riskLabel(lang, llm.risk);
-            const reasonSuffix = llm.riskReason ? t("parenSuffix", { reason: llm.riskReason }) : "";
+            const reasonSuffix = llm.riskReason
+              ? t("parenSuffix", { reason: llm.riskReason })
+              : "";
             riskLine = t("danger.riskLine", { icon, risk, reason: reasonSuffix });
           } else {
             explanation =
@@ -330,9 +413,9 @@ export default function (pi: ExtensionAPI) {
             choice = await ctx.ui.select(
               t("danger.selectTitle", {
                 label: labelText,
-                explanation,
+                explanation: previewProse(explanation),
                 riskLine,
-                command,
+                command: previewCommand(command),
               }),
               [t("opt.yes"), t("opt.no")],
             );
@@ -358,15 +441,17 @@ export default function (pi: ExtensionAPI) {
         if (approvedCommands.has(command)) return undefined;
 
         const local = explainCommand(command, lang);
-        const effectPrefix = local ? t("outside.effectPrefix", { effect: local }) : "";
+        const effectPrefix = local
+          ? t("outside.effectPrefix", { effect: previewProse(local) })
+          : "";
         notifyApprovalStart(`工作区外写入：${outside.join(", ")}`);
         let choice: string | undefined;
         try {
           choice = await ctx.ui.select(
             t("outside.selectTitle", {
               effect: effectPrefix,
-              command,
-              paths: outside.join("\n"),
+              command: previewCommand(command),
+              paths: previewPaths(outside),
               cwd,
             }),
             [t("opt.allowOnce"), t("opt.allowSession"), t("opt.deny")],

@@ -1,6 +1,8 @@
 /**
  * Pi 悬浮状态窗口 —— 状态扩展。Pi floating status window — status extension.
  *
+ * 版本：v1.2（与 CHANGELOG.md 顶部一致）
+ *
  * 订阅 Pi 的会话/代理/工具事件，将运行状态写入临时目录的状态 JSON，
  * 供 Windows 悬浮窗程序（pi-status-window）轮询显示。
  * Subscribes to Pi session/agent/tool events and writes runtime status to a
@@ -25,7 +27,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // 类型 Types
@@ -78,6 +80,22 @@ const CONFIG_PATH = join(EXT_DIR, "config.json");
 const STATE_PATH = join(tmpdir(), "pi-status.json");
 
 const DEFAULT_CONFIG: StatusConfig = { language: "en" };
+
+/** rename 重试的退避毫秒数（首次失败后最多重试 3 次）。
+ *  Windows 上悬浮窗每 300ms 轮询读取 `pi-status.json` 时会短暂持有该文件
+ *  （.NET `File.ReadAllText` 的共享模式不含「删除共享」），使覆盖式 rename
+ *  瞬时返回 EPERM/EACCES；多实例共用同一 `.tmp` 时还会出现 ENOENT。
+ *  读取窗口仅数十微秒，短退避即可几乎必然重试成功。
+ *  Backoff delays for rename retries (up to 3 retries after the first failure).
+ *  On Windows the floating window's 300 ms polling read briefly holds the file
+ *  without delete sharing, so an overwriting rename transiently fails with
+ *  EPERM/EACCES; concurrent instances sharing one `.tmp` can also yield ENOENT.
+ *  The read window lasts tens of microseconds, so a short backoff suffices. */
+const RENAME_RETRY_DELAYS_MS = [3, 10, 25];
+
+/** 可重试的 rename 错误码（均为瞬时占用/竞争，非永久性失败）。
+ *  Retryable rename error codes (transient sharing/contention, not permanent). */
+const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY", "ENOENT"]);
 
 /** 危险命令模式（用于审批状态启发式检测，与 workspace-guard 保持一致）。
  *  Dangerous command patterns (heuristic for approval status, consistent with workspace-guard). */
@@ -139,16 +157,60 @@ function saveConfig(config: StatusConfig): void {
 // 状态写入 Status writing
 // ---------------------------------------------------------------------------
 
-/** 原子写入：先写临时文件再重命名，避免悬浮窗读到半截 JSON。
- *  Atomic write: write to a temp file then rename, so the floating window never reads partial JSON. */
+/** 同步休眠缓冲：用 Atomics.wait 实现同步等待，不引入额外依赖。
+ *  Buffer for synchronous sleeping via Atomics.wait (no extra dependencies). */
+const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+/** 同步休眠指定毫秒（阻塞调用线程）。Synchronous sleep of the given ms (blocks the calling thread). */
+function sleepSync(ms: number): void {
+	Atomics.wait(SLEEP_BUFFER, 0, 0, ms);
+}
+
+/** 判断 rename 失败是否为可重试的瞬时错误。
+ *  Whether a rename failure is a retryable transient error. */
+function isRetryableRenameError(error: unknown): boolean {
+	const code = (error as { code?: string } | null | undefined)?.code;
+	return typeof code === "string" && RETRYABLE_RENAME_CODES.has(code);
+}
+
+/**
+ * 原子写入：先写临时文件再重命名，避免悬浮窗读到半截 JSON。
+ * 悬浮窗轮询读取（或多实例共用 `.tmp`）会造成瞬时占用，故对可重试
+ * 错误码做短退避重试；全部失败时清理残留临时文件并记录错误。
+ * Atomic write: write to a temp file then rename, so the floating window never
+ * reads partial JSON. Because the window's polling read (or another instance
+ * sharing the `.tmp`) holds the file transiently, retryable error codes are
+ * retried with a short backoff; on final failure the leftover temp file is
+ * removed and the error is logged.
+ */
 function writeStateAtomically(payload: StatusPayload): void {
 	const tmpPath = `${STATE_PATH}.tmp`;
-	try {
-		writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf8");
-		renameSync(tmpPath, STATE_PATH);
-	} catch (error) {
-		console.error("[pi-status] failed to write state:", error);
+	const data = JSON.stringify(payload, null, 2);
+	let lastError: unknown;
+
+	for (let attempt = 0; attempt <= RENAME_RETRY_DELAYS_MS.length; attempt++) {
+		try {
+			// 每次重试都重写临时文件：多实例竞争时 `.tmp` 可能已被对方移走。
+			// Rewrite the temp file on every attempt: under multi-instance
+			// contention the `.tmp` may already have been renamed away.
+			writeFileSync(tmpPath, data, "utf8");
+			renameSync(tmpPath, STATE_PATH);
+			return;
+		} catch (error) {
+			lastError = error;
+			if (!isRetryableRenameError(error)) break;
+			if (attempt < RENAME_RETRY_DELAYS_MS.length) sleepSync(RENAME_RETRY_DELAYS_MS[attempt]);
+		}
 	}
+
+	// 清理残留临时文件，避免半成品长期存在；清理失败不掩盖原始错误。
+	// Remove the leftover temp file; a cleanup failure must not mask the cause.
+	try {
+		unlinkSync(tmpPath);
+	} catch {
+		/* 临时文件可能已不存在。The temp file may already be gone. */
+	}
+	console.error("[pi-status] failed to write state:", lastError);
 }
 
 /**

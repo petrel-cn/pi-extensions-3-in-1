@@ -6,6 +6,7 @@
  *  - extractWriteTargets: 从 bash 命令中提取可能写入/修改的目标路径
  *  - DANGEROUS_PATTERNS: 危险 bash 命令模式（中英双语标签）
  *  - explainCommand: 以自然语言说明 bash 命令的作用（本地模板，中英双语）
+ *  - clampLines / clampChars: 审批框内容裁剪（固定行数策略 + 长文本字符上限，不做宽度预估）
  */
 
 import path from "node:path";
@@ -238,6 +239,53 @@ export function explainCommand(command: string, lang: Lang): string {
     if (line) lines.push(`• ${line}`);
   }
   return lines.join("\n");
+}
+
+// ---------- 审批框内容裁剪（固定策略：按行数 / 字符数，不做宽度预估、不强制折行） ----------
+
+/** clampLines 的选项。 */
+export interface ClampLinesOptions {
+  /** 行数不超过该值时原样显示全部内容 */
+  fullMaxLines: number;
+  /** 超出时保留的头部行数 */
+  headLines: number;
+  /** 超出时保留的尾部行数 */
+  tailLines: number;
+  /** 省略标记行文案生成函数，入参为被省略的行数（由调用方提供本地化文本） */
+  marker: (skipped: number) => string;
+}
+
+/**
+ * 按固定行数策略裁剪多行文本（命令预览、目标路径列表）：
+ *  - 行数 ≤ fullMaxLines：原样返回（全部显示）
+ *  - 行数 >  fullMaxLines：头部 headLines 行 + 省略标记行 + 尾部 tailLines 行
+ * 不做任何宽度处理：超宽行原样保留，由终端自动换行。
+ */
+export function clampLines(text: string, options: ClampLinesOptions): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  if (lines.length <= options.fullMaxLines) return text;
+
+  const headLines = Math.max(1, Math.floor(options.headLines));
+  const tailLines = Math.max(0, Math.floor(options.tailLines));
+  const skipped = lines.length - headLines - tailLines;
+  // 头部 + 尾部本身就超过上限时（参数配置不当）退化为只保留头部
+  if (skipped < 0) return lines.slice(0, options.fullMaxLines).join("\n");
+
+  return [
+    ...lines.slice(0, headLines),
+    options.marker(skipped),
+    ...(tailLines > 0 ? lines.slice(lines.length - tailLines) : []),
+  ].join("\n");
+}
+
+/**
+ * 按字符数上限裁剪长文本（LLM 说明 / 本地模板说明等散文）：
+ * 超出时截断到 maxChars 个字符并追加省略号；不做折行，由终端自动换行。
+ */
+export function clampChars(text: string, maxChars: number): string {
+  const limit = Math.max(16, Math.floor(maxChars));
+  const chars = [...text];
+  return chars.length <= limit ? text : chars.slice(0, limit).join("") + "…";
 }
 
 /** 解释单个命令段 */

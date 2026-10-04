@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-25
+
+### Added
+
+- **Bounded approval dialogs** — long commands no longer overflow the approval prompt. Two pure helpers land in `core.ts` (`clampLines()`, `clampChars()`) and `index.ts` applies a fixed preview policy to all three approval dialogs:
+  - command preview and target-path list: **20 lines or fewer are shown in full; longer ones show the first 16 lines, an omission marker, and the last 3 lines** (20 lines in total, `⋯ (N lines omitted)` / `⋯ (N more targets not shown)`);
+  - prose (the LLM explanation and the local-template effect text): **never re-wrapped by the extension** — the terminal wraps it to whatever width the window actually has, and it is only cut in the pathological case of more than 1000 characters (a safety valve that normal 200–400 character explanations never hit);
+  - no terminal size is read at all: the extension does no width estimation and no forced wrapping, so a wrapped-then-rewrapped mess can never happen at any window width.
+- **New i18n keys** — `clamp.omittedLines`, `clamp.omittedTargets` (zh + en).
+
+### Fixed
+
+- **Approval prompts taller than the terminal were unreadable.** The built-in `select` dialog has no height cap and no internal scrolling, and in regular TUI mode its viewport is pinned to the bottom of the buffer, so only the tail stayed visible; the terminal's own scrollbar spans the whole session scrollback and can only jump between the extremes, leaving the beginning of the command unreachable. Dialog contents are now clamped before display, so the command's first lines and its closing lines are both visible.
+
+### Verified
+
+- Unit tests 18/18 and policy tests 14/14 (1/15/20 lines returned verbatim, 21 lines → head 16 + marker + tail 3, 53 lines → 34 reported as omitted, no horizontal truncation of over-long single lines, CRLF, prose returned verbatim, 300/1000-character prose untouched, 2000-character prose hits the safety valve, emoji counted by code point, empty input).
+- Title-assembly tests 15/15 (the command title contains the first 16 lines verbatim, the omission marker and the last 3 lines; prose inserted without any added line breaks; path lists follow the same policy).
+- Height: a fixed 20-line command block plus prose wrapped by the terminal keeps the whole dialog on one screen on regular terminals (≥ 40 rows).
+
+## [2.5.0] - 2026-09-25
+
+### Added
+
+- **`llmExtraRules` in `config.json`** (optional `string[]`) — extra audit rules appended to the dangerous-command LLM system prompt, one bullet per entry, under a dedicated section that states it takes precedence over the rest of the prompt. Lets a deployment inject its own risk policy (for example directory-specific exemptions) without patching the extension.
+- **`readConfig()` export** in `i18n.ts` — tolerant `config.json` reader, shared by the language persistence logic and the extra-rules lookup.
+
+### Changed
+
+- **Prompt assembly split** — `llmSystemPrompt()` is now a thin wrapper around `llmBasePrompt()` (the unchanged base prompt). With no extra rules configured the resulting system prompt is identical to the previous release, and the extra-rules section is the only addition otherwise.
+- **`setLanguage()` merge-write** — `config.json` is updated field by field instead of being overwritten wholesale, so `/wsguard lang` no longer drops other settings such as `llmExtraRules`.
+
 ## [2.4.0] - 2026-08-29
 
 ### Added
@@ -51,11 +83,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - **Initial release** — outside-workspace write approval for `write`/`edit`/`bash`, dangerous-command protection (`rm -r`, `sudo`, `chmod/chown 777`), and the `/wsguard` toggle command with `state.json` persistence.
-
-[Unreleased]: https://example.com/workspace-guard/compare/v2.4.0...HEAD
-[2.4.0]: https://example.com/workspace-guard/compare/v2.3.0...v2.4.0
-[2.3.0]: https://example.com/workspace-guard/compare/v2.2.0...v2.3.0
-[2.2.0]: https://example.com/workspace-guard/compare/v2.1.0...v2.2.0
-[2.1.0]: https://example.com/workspace-guard/compare/v2.0.0...v2.1.0
-[2.0.0]: https://example.com/workspace-guard/compare/v1.0.0...v2.0.0
-[1.0.0]: https://example.com/workspace-guard/releases/tag/v1.0.0

@@ -1,6 +1,8 @@
 /**
  * 账户余额显示扩展。Account balance display extension.
  *
+ * 版本：v1.6（与 CHANGELOG.md 顶部一致）
+ *
  * 在底部 footer 中显示当前模型所属提供商的账户余额，
  * 紧跟上下文用量指示（如 "0.0%/1.0M (auto)"）之后。
  * Shows the current model provider's account balance in the footer,
@@ -26,7 +28,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { renameSync, writeFileSync } from "node:fs";
+import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fetchBalance, supportsProvider } from "./providers/index";
 import { loadConfig, saveConfig, INTERVAL_OPTIONS_MS } from "./config";
@@ -47,6 +49,36 @@ interface BalanceStatePayload {
 
 /** 悬浮窗读取的余额 JSON 路径。Balance JSON path read by the floating window. */
 const BALANCE_STATE_PATH = join(tmpdir(), "pi-balance.json");
+
+/** rename 重试的退避毫秒数（首次失败后最多重试 3 次）。
+ *  Windows 上悬浮窗每 300ms 轮询读取 `pi-balance.json` 时会短暂持有该文件
+ *  （.NET `File.ReadAllText` 的共享模式不含「删除共享」），使覆盖式 rename
+ *  瞬时返回 EPERM/EACCES；多实例共用同一 `.tmp` 时还会出现 ENOENT。
+ *  Backoff delays for rename retries (up to 3 retries after the first failure).
+ *  On Windows the floating window's 300 ms polling read briefly holds the file
+ *  without delete sharing, so an overwriting rename transiently fails with
+ *  EPERM/EACCES; concurrent instances sharing one `.tmp` can also yield ENOENT. */
+const RENAME_RETRY_DELAYS_MS = [3, 10, 25];
+
+/** 可重试的 rename 错误码（均为瞬时占用/竞争，非永久性失败）。
+ *  Retryable rename error codes (transient sharing/contention, not permanent). */
+const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY", "ENOENT"]);
+
+/** 同步休眠缓冲：用 Atomics.wait 实现同步等待，不引入额外依赖。
+ *  Buffer for synchronous sleeping via Atomics.wait (no extra dependencies). */
+const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+/** 同步休眠指定毫秒（阻塞调用线程）。Synchronous sleep of the given ms (blocks the calling thread). */
+function sleepSync(ms: number): void {
+	Atomics.wait(SLEEP_BUFFER, 0, 0, ms);
+}
+
+/** 判断 rename 失败是否为可重试的瞬时错误。
+ *  Whether a rename failure is a retryable transient error. */
+function isRetryableRenameError(error: unknown): boolean {
+	const code = (error as { code?: string } | null | undefined)?.code;
+	return typeof code === "string" && RETRYABLE_RENAME_CODES.has(code);
+}
 
 export default function (pi: ExtensionAPI) {
 	// ------------------------------------------------------------------
@@ -69,8 +101,14 @@ export default function (pi: ExtensionAPI) {
 	/**
 	 * 将当前余额状态原子写入 %TEMP%/pi-balance.json，供悬浮窗读取。
 	 * 写入纯金额（不含 emoji），避免 GDI+ 渲染乱码。
+	 * 悬浮窗轮询读取（或多实例共用 `.tmp`）会造成瞬时占用，故对可重试
+	 * 错误码做短退避重试；全部失败时清理残留临时文件并记录错误。
 	 * Atomically write the current balance state for the floating window.
 	 * Writes the plain amount (no emoji) to avoid GDI+ rendering artifacts.
+	 * Because the window's polling read (or another instance sharing the `.tmp`)
+	 * holds the file transiently, retryable error codes are retried with a short
+	 * backoff; on final failure the leftover temp file is removed and the error
+	 * is logged.
 	 */
 	function writeBalanceState(): void {
 		const tmpPath = `${BALANCE_STATE_PATH}.tmp`;
@@ -79,12 +117,32 @@ export default function (pi: ExtensionAPI) {
 			kind: balanceKind,
 			ts: Date.now(),
 		};
-		try {
-			writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf8");
-			renameSync(tmpPath, BALANCE_STATE_PATH);
-		} catch (error) {
-			console.error("[balance] failed to write state:", error);
+		const data = JSON.stringify(payload, null, 2);
+		let lastError: unknown;
+
+		for (let attempt = 0; attempt <= RENAME_RETRY_DELAYS_MS.length; attempt++) {
+			try {
+				// 每次重试都重写临时文件：多实例竞争时 `.tmp` 可能已被对方移走。
+				// Rewrite the temp file on every attempt: under multi-instance
+				// contention the `.tmp` may already have been renamed away.
+				writeFileSync(tmpPath, data, "utf8");
+				renameSync(tmpPath, BALANCE_STATE_PATH);
+				return;
+			} catch (error) {
+				lastError = error;
+				if (!isRetryableRenameError(error)) break;
+				if (attempt < RENAME_RETRY_DELAYS_MS.length) sleepSync(RENAME_RETRY_DELAYS_MS[attempt]);
+			}
 		}
+
+		// 清理残留临时文件，避免半成品长期存在；清理失败不掩盖原始错误。
+		// Remove the leftover temp file; a cleanup failure must not mask the cause.
+		try {
+			unlinkSync(tmpPath);
+		} catch {
+			/* 临时文件可能已不存在。The temp file may already be gone. */
+		}
+		console.error("[balance] failed to write state:", lastError);
 	}
 
 	// ------------------------------------------------------------------

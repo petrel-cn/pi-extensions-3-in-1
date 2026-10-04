@@ -12,6 +12,16 @@
 
 本扩展是**数据生产者**：它监听 pi 的生命周期事件，翻译成一个精简、结构化的状态对象，任何程序都能消费。它自身**没有 UI**——可见的悬浮窗是独立的 [pi-status-window](../pi-status-window/) 程序。
 
+## 文件结构
+
+```
+pi-status/
+├── index.ts      # 入口：事件订阅 + 状态机 + JSON 原子写入 + /pi-status 命令
+├── config.json   # 语言配置（/pi-status zh|en 写入，自动生成，已 git-ignore）
+├── README.md     # 本说明
+└── CHANGELOG.md  # 修改记录
+```
+
 ## 状态机
 
 ```
@@ -51,7 +61,7 @@ pi install ./pi-status
 
 ```bash
 pi install npm:@petrel-cn/pi-status     # 或
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 ```
 
 > 扩展拥有完整系统权限。仅安装来源可信的扩展。
@@ -80,7 +90,8 @@ pi install git:github.com/petrel-cn/pi-extensions@v1
 ```
 
 - `summary` 为语义化结构，由悬浮窗按当前 `language` 本地化渲染。
-- 原子写入（临时文件 + 重命名），悬浮窗不会读到半截 JSON。
+- 原子写入（临时文件 + 重命名），悬浮窗不会读到半截 JSON；重命名因轮询读者正持有该文件而失败时，按短退避（3/10/25 ms）重试。
+- Pi 运行期间每 5 秒刷新一次文件时间戳（心跳），消费者无需依赖事件时序即可识别被强杀或崩溃的 pi。
 
 ## 语言与国际化
 
@@ -100,10 +111,21 @@ pi install git:github.com/petrel-cn/pi-extensions@v1
 - **被消费方** —— [pi-status-window](../pi-status-window/) 悬浮窗程序。
 - 运行时依赖：`@earendil-works/pi-coding-agent`（由 pi 提供；列出在 `peerDependencies`）。
 
+## 非交互模式行为
+
+本扩展不依赖任何 UI 方法（不使用 `notify` / `setStatus` / `setWidget` / `setFooter`），在 `json` / `print` / `rpc` 模式下状态写入照常工作。
+
 ## 兼容性
 
 - pi 版本：已在 `0.84.x` 上测试。
 - Node.js：`>= 20`。
+
+## 说明
+
+- 审批状态优先取 [workspace-guard](../workspace-guard/) 的 `pi-status:approval` 事件总线；该扩展缺失时退回危险 bash 命令的启发式检测，及时性较差。
+- 余额数据由 [balance](../balance/) 扩展提供，本扩展不查询任何 API。
+- 悬浮窗为独立项目，需另行部署。
+- 重命名重试使用 `Atomics.wait` 同步休眠，其精度受系统定时器粒度限制（Windows 上实际约 15ms）。极端情况下（连续 3 次都失败）会阻塞主线程约 40~60ms；心跳每 5s 一次，实际无感。
 
 ## 许可协议
 

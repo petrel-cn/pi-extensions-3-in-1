@@ -1,6 +1,6 @@
 {
   "name": "@petrel-cn/workspace-guard",
-  "version": "2.4.0",
+  "version": "2.6.0",
   "description": "Keep file writes within the current workspace, prompting for approval on anything outside it.",
   "keywords": ["pi-package", "pi", "workspace", "guard", "approval", "security"],
   "license": "MIT",

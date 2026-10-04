@@ -15,7 +15,22 @@
 - **Multi-currency** — currency symbols are detected from the API response (`CNY → ￥`, `USD → $`); all currencies are shown, space-separated.
 - **Configurable refresh** — default 60s, selectable 30s–300s via `/balance-interval`; persisted to `config.json` next to the extension.
 - **Machine-readable output** — additionally writes a plain amount (no emoji) to `%TEMP%/pi-balance.json`, so other tools or the [pi-status-window](../../pi-status-window/) floating window can consume it.
+- **Resilient state writes** — `%TEMP%/pi-balance.json` is written atomically (temp file + rename). On Windows a concurrently polling reader can hold the file open for a few microseconds, so a failed rename is retried with a short backoff (3/10/25 ms) rather than surfacing an error.
 - **Bilingual** — follows the system/PI_LANG language, falling back to English (see [Language](#language--internationalization)).
+
+## File layout
+
+```
+balance/
+├── index.ts          # entry: footer rendering, refresh timer, model-switch handling, /balance-interval
+├── i18n.ts           # zh/en dictionary and t()
+├── config.ts         # refresh-interval config read/write (default 60s, clamped to 30s–300s)
+├── config.json       # persisted config (created on first run, git-ignored)
+└── providers/
+    ├── index.ts      # dispatcher: provider → query module (register new providers here)
+    ├── deepseek.ts   # deepseek balance query (GET /user/balance, Bearer auth)
+    └── stub.ts       # placeholder for other providers (returns unsupported)
+```
 
 ## Install
 
@@ -31,7 +46,7 @@ Then `/reload` in pi to activate the extension. When published on npm or git, yo
 
 ```bash
 pi install npm:@petrel-cn/balance     # or
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 ```
 
 > Extensions run with full system permissions. Only install sources you trust.
@@ -76,6 +91,17 @@ The `💰 Fetch failed` message (shown when a balance query fails) follows this 
 
 - pi version: tested against `0.84.x` (uses `setFooter`, `modelRegistry.getProviderAuth`).
 - Node.js: `>= 20`.
+
+## Non-interactive mode
+
+- `ctx.ui.setFooter` renders nothing outside TUI mode (`json` / `print` / `rpc`), so the footer produces no output there.
+- Balance queries, the refresh timer and the `%TEMP%/pi-balance.json` write do not depend on the UI and behave the same.
+
+## Notes
+
+- The balance query is `GET {baseUrl}/user/balance`; the API key is resolved from pi's credential store (`ctx.modelRegistry.getProviderAuth`) and is never hard-coded.
+- Failed queries show `💰 Fetch failed` in a warning colour; a missing key or an unsupported provider shows `💰 N/A`.
+- The cache-hit rate is computed over the whole session as `cacheRead / (input + cacheRead + cacheWrite)`, consistent with `pi-status`.
 
 ## Implementation note
 

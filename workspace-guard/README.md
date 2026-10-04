@@ -8,6 +8,19 @@
 
 `workspace-guard` constrains write operations to the current workspace (the session `cwd`). Anything that would write outside the workspace — or a dangerous command anywhere — requires your approval first.
 
+## File layout
+
+```
+workspace-guard/
+├── index.ts     # entry: interception logic, /wsguard and lang commands, approval UI, LLM explanation
+├── core.ts      # pure helpers: path checks, bash write-target extraction (quote-aware/MSYS), dangerous patterns, local templates, prompt clamping
+├── i18n.ts      # language resolution (PI_LANG / system / English fallback) + zh/en dictionary and t()
+├── config.json  # user config: language + extra audit rules, auto-generated, git-ignored
+├── state.json   # on/off memory written by /wsguard on|off, auto-generated, git-ignored
+├── README.md    # this file
+└── CHANGELOG.md # change history
+```
+
 ## Approval dialogs
 
 <details>
@@ -30,6 +43,8 @@
 - **`bash` tool** — detects write targets in the command (redirects `>`, `>>`, and `cp`/`mv`/`rm`/`mkdir`/`touch`/`tee`/`install`/`dd`/`ln`). Targets outside the workspace prompt for approval.
 - **Dangerous-command protection** — `rm -r/-rf`, `sudo`, and `chmod/chown 777` require confirmation regardless of whether they stay inside the workspace.
 - **LLM explanation + risk assessment** — for dangerous commands, an LLM (reusing the current session's model and credentials, nothing hard-coded) generates a natural-language explanation and a risk level. On failure/timeout/no model it falls back to a local template.
+- **Custom audit rules** — the optional `llmExtraRules` field in `config.json` appends your own rules to the audit prompt (see [Configuration](#configuration)).
+- **Bounded approval prompts** — dialog contents are clamped so even a command hundreds of lines long is readable: the command preview (and the target-path list) shows the **first 16 lines, an omission marker and the last 3 lines** (20 lines or fewer are shown in full), while the LLM explanation is never re-wrapped by the extension — the terminal wraps it, and it is only cut beyond 1000 characters (a safety valve).
 - **Non-interactive mode** (print/json/rpc, no UI) — outside-workspace writes and dangerous commands are always rejected.
 - **Session approval cache** — "Allow this session" keeps a path/command approved for the rest of the current session.
 - **Bilingual** — the whole UI follows the system/PI_LANG language, falling back to English.
@@ -48,7 +63,7 @@ Then `/reload` in pi to activate. When published on npm or git, you will also be
 
 ```bash
 pi install npm:@petrel-cn/workspace-guard     # or
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 ```
 
 > Extensions run with full system permissions. Only install sources you trust.
@@ -77,6 +92,15 @@ pi install git:github.com/petrel-cn/pi-extensions@v1
 
 The extension also reads `state.json` (enabled flag) and `config.json` (language) next to itself, both auto-generated on first use.
 
+### `config.json`
+
+| Field | Type | Default | Effect |
+|-------|------|---------|--------|
+| `language` | `"zh"` \| `"en"` | from `PI_LANG` / system locale | UI and prompt language, written by `/wsguard lang` |
+| `llmExtraRules` | `string[]` | none | Extra audit rules appended to the dangerous-command LLM system prompt |
+
+`llmExtraRules` entries are appended verbatim — one bullet per entry — to the end of the dangerous-command audit prompt, under a dedicated section stating that it takes precedence over the rest of the prompt. That makes it possible to inject a deployment-specific risk policy (for example "deletions under `/srv/scratch/` are always low risk") without patching the extension source. Entries that are not non-empty strings are ignored, and the field is never overwritten by `/wsguard lang`.
+
 ## Language / Internationalization
 
 The approval UI, command descriptions, LLM prompt, risk labels, and local templates are all bilingual. Language resolution priority:
@@ -104,6 +128,9 @@ The LLM system prompt requests Chinese `低/中/高` or English `low/medium/high
 - Device files (`/dev/*`, `nul`) are not treated as disk writes and do not trigger approval.
 - Paths containing variables or command substitutions are skipped (cannot be statically analyzed).
 - `git`/`npm`/`yarn`/`pnpm`/`pip` subcommands get a natural-language explanation from the local template.
+- Approval prompts are clamped by a fixed policy (v2.6): the command block shows the first 16 lines plus the last 3 (20 lines or fewer in full), path lists use the same rule, and prose is only cut beyond 1000 characters. The omitted middle of a command is not shown in the dialog.
+- No width handling is performed: a single extremely long command line is wrapped by the terminal and can occupy many rows, so on very small terminals a prompt may still exceed the screen.
+- `config.json` (language + extra audit rules) and `state.json` (on/off memory) are auto-generated on first use. Back up `config.json` before an overwriting upgrade if you have custom `llmExtraRules`.
 
 ## License
 

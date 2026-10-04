@@ -1,6 +1,6 @@
 {
   "name": "@petrel-cn/balance",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Show the current model provider's account balance in the pi footer.",
   "keywords": ["pi-package", "pi", "balance", "footer", "account"],
   "license": "MIT",

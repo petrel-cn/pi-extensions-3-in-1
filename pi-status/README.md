@@ -12,6 +12,16 @@
 
 The extension is the **data producer**: it listens to pi's lifecycle and translates it into a small, structured status object that any program can consume. It has no UI of its own — the visible window is the separate [pi-status-window](../pi-status-window/) app.
 
+## File layout
+
+```
+pi-status/
+├── index.ts      # entry: event subscriptions, state machine, atomic JSON write, /pi-status command
+├── config.json   # language config (written by /pi-status zh|en, auto-generated, git-ignored)
+├── README.md     # this file
+└── CHANGELOG.md  # change history
+```
+
 ## State machine
 
 ```
@@ -51,7 +61,7 @@ Then `/reload` in pi to activate. When published on npm or git, you will also be
 
 ```bash
 pi install npm:@petrel-cn/pi-status     # or
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 ```
 
 > Extensions run with full system permissions. Only install sources you trust.
@@ -80,7 +90,8 @@ The language is persisted to `config.json` next to the extension.
 ```
 
 - `summary` is a semantic structure, localized by the floating window using the current `language`.
-- Writes are atomic (temp file + rename) so the floating window never reads a partial JSON.
+- Writes are atomic (temp file + rename) so the floating window never reads a partial JSON. A rename that fails because the polling reader is holding the file open is retried with a short backoff (3/10/25 ms).
+- While pi is running, the file's timestamp is refreshed every 5 seconds (heartbeat), so a consumer can detect a killed or crashed pi without relying on event ordering.
 
 ## Language / Internationalization
 
@@ -100,10 +111,21 @@ The `language` field tells the floating window which locale to render the summar
 - **Consumed by** — the [pi-status-window](../pi-status-window/) floating window app.
 - Runtime deps: `@earendil-works/pi-coding-agent` (provided by pi; list in `peerDependencies`).
 
+## Non-interactive mode
+
+The extension uses no UI API (`notify` / `setStatus` / `setWidget` / `setFooter`), so status writing keeps working under `json` / `print` / `rpc`.
+
 ## Compatibility
 
 - pi version: tested against `0.84.x`.
 - Node.js: `>= 20`.
+
+## Notes
+
+- Approval state prefers the `pi-status:approval` event bus from [workspace-guard](../workspace-guard/); without that extension it falls back to heuristic detection of dangerous bash commands, which is less timely.
+- Balance data is produced by the [balance](../balance/) extension; this extension never queries an API itself.
+- The floating window is a separate project and is deployed on its own.
+- The rename retry sleeps synchronously via `Atomics.wait`, whose resolution is bounded by the system timer (about 15 ms on Windows). In the worst case (three consecutive failures) the main thread is blocked for roughly 40–60 ms; with a heartbeat every 5 s this is not observable in practice.
 
 ## License
 

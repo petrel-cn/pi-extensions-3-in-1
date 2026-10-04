@@ -1,4 +1,4 @@
-# pi-extensions
+# pi-extensions-3-in-1
 
 > 一套为 [pi](https://github.com/earendil-works/pi-coding-agent) 打造的扩展及配套桌面程序合集。
 
@@ -18,7 +18,7 @@
 **Git 或 npm（整套）：**
 
 ```bash
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 pi install npm:@petrel-cn/pi-extensions
 ```
 

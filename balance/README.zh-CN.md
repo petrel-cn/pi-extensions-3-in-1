@@ -15,7 +15,22 @@
 - **多币种** —— 货币符号按接口返回自动识别（`CNY → ￥`、`USD → $`）；多币种全部显示，空格分隔。
 - **可配置刷新** —— 默认 60s，可通过 `/balance-interval` 选择 30s–300s；持久化到扩展旁的 `config.json`。
 - **机器可读输出** —— 额外写入纯金额（无 emoji）到 `%TEMP%/pi-balance.json`，供其他工具或 [pi-status-window](../../pi-status-window/) 悬浮窗消费。
+- **稳健的状态写入** —— `%TEMP%/pi-balance.json` 采用原子写入（临时文件 + 重命名）。Windows 上并发轮询的读者会短暂持有该文件，重命名失败时按短退避（3/10/25 ms）重试，而不是直接报错。
 - **双语** —— 跟随系统 / `PI_LANG` 语言，兜底英文（见 [语言与国际化](#语言--国际化)）。
+
+## 文件结构
+
+```
+balance/
+├── index.ts          # 入口：footer 渲染 + 定时刷新 + 模型切换响应 + /balance-interval 命令
+├── i18n.ts           # 中英双语字典与 t()
+├── config.ts         # 刷新间隔配置读写（默认 60s，钳制 30s–300s）
+├── config.json       # 配置持久化（首次运行生成，已 git-ignore）
+└── providers/
+    ├── index.ts      # 分发表：provider → 查询模块（新提供商在此注册）
+    ├── deepseek.ts   # deepseek 余额查询（GET /user/balance，Bearer 认证）
+    └── stub.ts       # 其他 provider 占位（返回 unsupported）
+```
 
 ## 安装
 
@@ -31,7 +46,7 @@ pi install ./balance
 
 ```bash
 pi install npm:@petrel-cn/balance     # 或
-pi install git:github.com/petrel-cn/pi-extensions@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
 ```
 
 > 扩展拥有完整系统权限。仅安装来源可信的扩展。
@@ -76,6 +91,17 @@ pi install git:github.com/petrel-cn/pi-extensions@v1
 
 - pi 版本：已在 `0.84.x` 上测试（使用 `setFooter`、`modelRegistry.getProviderAuth`）。
 - Node.js：`>= 20`。
+
+## 非交互模式行为
+
+- `ctx.ui.setFooter` 在非 TUI 模式（`json` / `print` / `rpc`）下不渲染，footer 无输出。
+- 余额查询、定时刷新与 `%TEMP%/pi-balance.json` 写入不依赖 UI，行为不受影响。
+
+## 说明
+
+- 余额查询为 `GET {baseUrl}/user/balance`；API key 从 pi 的认证存储（`ctx.modelRegistry.getProviderAuth`）解析，不硬编码。
+- 查询失败显示警告色的 `💰 获取失败`；无 key 或不支持的提供商显示 `💰 N/A`。
+- 缓存命中率按整个会话汇总计算：`cacheRead / (input + cacheRead + cacheWrite)`，与 `pi-status` 一致。
 
 ## 实现说明
 

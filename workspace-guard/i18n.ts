@@ -69,6 +69,10 @@ const messages: Record<Lang, Record<string, string>> = {
     "risk.medium": "中",
     "risk.high": "高",
 
+    // 审批框内容裁剪（超长命令/路径）
+    "clamp.omittedLines": "⋯（已省略 {n} 行）",
+    "clamp.omittedTargets": "⋯（另有 {n} 个目标未显示）",
+
     // LLM 说明的用户消息
     "llm.userContent": "待审批命令：\n{command}",
   },
@@ -120,6 +124,10 @@ const messages: Record<Lang, Record<string, string>> = {
     "risk.high": "High",
 
     "llm.userContent": "Pending approval command:\n{command}",
+
+    // 审批框内容裁剪（超长命令/路径）
+    "clamp.omittedLines": "⋯ ({n} lines omitted)",
+    "clamp.omittedTargets": "⋯ ({n} more targets not shown)",
   },
 };
 
@@ -130,16 +138,20 @@ function envLang(): Lang | undefined {
   return undefined;
 }
 
-function persistLang(): Lang | undefined {
+/** 读取 config.json（容错：文件缺失或损坏时返回空对象）。 */
+export function readConfig(): Record<string, unknown> {
   try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-      if (cfg.language === "zh" || cfg.language === "en") return cfg.language as Lang;
-    }
+    const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   } catch (_) {
-    /* config 损坏时忽略，走其它来源 */
+    /* config 缺失或损坏时忽略，走其它来源 */
+    return {};
   }
-  return undefined;
+}
+
+function persistLang(): Lang | undefined {
+  const value = readConfig().language;
+  return value === "zh" || value === "en" ? value : undefined;
 }
 
 function systemLangHint(): Lang {
@@ -164,11 +176,16 @@ export function getLanguage(): Lang {
   return currentLang;
 }
 
-/** 设置并持久化语言（供 /wsguard lang 使用），写入 config.json。 */
+/**
+ * 设置并持久化语言（供 /wsguard lang 使用），写入 config.json。
+ * 采用合并写：仅改写 language 字段，保留 config.json 中的其他配置。
+ */
 export function setLanguage(lang: Lang): void {
   currentLang = lang;
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify({ language: lang }, null, 2), "utf8");
+    const config = readConfig();
+    config.language = lang;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
   } catch (e) {
     console.error(`[workspace-guard] save language failed: ${(e as Error).message}`);
   }
