@@ -20,12 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - **Approval prompts taller than the terminal were unreadable.** The built-in `select` dialog has no height cap and no internal scrolling, and in regular TUI mode its viewport is pinned to the bottom of the buffer, so only the tail stayed visible; the terminal's own scrollbar spans the whole session scrollback and can only jump between the extremes, leaving the beginning of the command unreachable. Dialog contents are now clamped before display, so the command's first lines and its closing lines are both visible.
 
-### Verified
-
-- Unit tests 18/18 and policy tests 14/14 (1/15/20 lines returned verbatim, 21 lines → head 16 + marker + tail 3, 53 lines → 34 reported as omitted, no horizontal truncation of over-long single lines, CRLF, prose returned verbatim, 300/1000-character prose untouched, 2000-character prose hits the safety valve, emoji counted by code point, empty input).
-- Title-assembly tests 15/15 (the command title contains the first 16 lines verbatim, the omission marker and the last 3 lines; prose inserted without any added line breaks; path lists follow the same policy).
-- Height: a fixed 20-line command block plus prose wrapped by the terminal keeps the whole dialog on one screen on regular terminals (≥ 40 rows).
-
 ## [2.5.0] - 2026-09-25
 
 ### Added
