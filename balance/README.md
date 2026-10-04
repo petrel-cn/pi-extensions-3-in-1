@@ -46,7 +46,7 @@ Then `/reload` in pi to activate the extension. When published on npm or git, yo
 
 ```bash
 pi install npm:@petrel-cn/balance     # or
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 ```
 
 > Extensions run with full system permissions. Only install sources you trust.

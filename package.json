@@ -1,6 +1,6 @@
 {
   "name": "@petrel-cn/pi-extensions",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A collection of pi extensions: balance, workspace-guard, pi-status, plus the pi-status-window companion app.",
   "keywords": ["pi-package", "pi", "extensions"],
   "license": "MIT",

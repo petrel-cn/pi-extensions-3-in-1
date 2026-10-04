@@ -18,7 +18,7 @@
 **Git 或 npm（整套）：**
 
 ```bash
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 pi install npm:@petrel-cn/pi-extensions
 ```
 

@@ -63,7 +63,7 @@ pi install ./workspace-guard
 
 ```bash
 pi install npm:@petrel-cn/workspace-guard     # 或
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 ```
 
 > 扩展拥有完整系统权限。仅安装来源可信的扩展。

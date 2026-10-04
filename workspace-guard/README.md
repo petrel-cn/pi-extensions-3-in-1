@@ -63,7 +63,7 @@ Then `/reload` in pi to activate. When published on npm or git, you will also be
 
 ```bash
 pi install npm:@petrel-cn/workspace-guard     # or
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 ```
 
 > Extensions run with full system permissions. Only install sources you trust.
