@@ -1,7 +1,7 @@
 /**
  * Pi 悬浮状态窗口 —— 状态扩展。Pi floating status window — status extension.
  *
- * 版本：v1.2（与 CHANGELOG.md 顶部一致）
+ * 版本：v1.3（与 CHANGELOG.md 顶部一致）
  *
  * 订阅 Pi 的会话/代理/工具事件，将运行状态写入临时目录的状态 JSON，
  * 供 Windows 悬浮窗程序（pi-status-window）轮询显示。
@@ -62,6 +62,9 @@ interface StatusPayload {
 	cacheHitRate: number | null;
 	/** 上下文占用百分比，未知为 null。Context usage percent, null when unknown. */
 	contextPercent: number | null;
+	/** 写入进程 PID，用于多进程下的状态文件归属判定。
+	 *  Owning process PID, used for status-file ownership checks across processes. */
+	pid: number;
 	/** 写入时间戳（毫秒）。Write timestamp (ms). */
 	ts: number;
 }
@@ -97,6 +100,19 @@ const RENAME_RETRY_DELAYS_MS = [3, 10, 25];
  *  Retryable rename error codes (transient sharing/contention, not permanent). */
 const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY", "ENOENT"]);
 
+/** 归属超时：其他进程超过该时长未刷新心跳即视为已退出，状态文件可被接管。
+ *  需大于心跳间隔（5 秒），且小于悬浮窗的关闭判定阈值（15 秒）。
+ *  Ownership timeout: another process that has not refreshed the heartbeat for
+ *  this long is considered gone and its status file may be taken over. Must
+ *  exceed the heartbeat interval (5 s) and stay below the window's 15 s close
+ *  timeout. */
+const OWNER_STALE_MS = 12000;
+
+/** 让位后的冷却时间：避免两个进程在接管临界点反复争抢状态文件。
+ *  Cooldown after yielding ownership, so two processes do not keep fighting
+ *  over the status file around the takeover boundary. */
+const OWNERSHIP_BACKOFF_MS = 10000;
+
 /** 危险命令模式（用于审批状态启发式检测，与 workspace-guard 保持一致）。
  *  Dangerous command patterns (heuristic for approval status, consistent with workspace-guard). */
 const DANGEROUS_PATTERNS: Array<{ re: RegExp; label: string }> = [
@@ -130,6 +146,18 @@ let lastMetrics: Pick<StatusPayload, "cacheHitRate" | "contextPercent"> = {
  *  runs, so the floating window can detect liveness (heartbeat stop → closed). */
 const HEARTBEAT_MS = 5000;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+
+/** 本进程是否拥有状态文件（仅主会话拥有；子代理等临时会话永不拥有）。
+ *  Whether this process owns the status file (only a primary session does;
+ *  ephemeral child sessions never do). */
+let ownsDisplay = false;
+/** 让位冷却截止时间（毫秒时间戳），冷却期内不再尝试接管。
+ *  Timestamp until which takeover attempts pause after yielding ownership. */
+let ownershipBackoffUntil = 0;
+/** 本进程内是否已有主会话在维护状态文件（同进程多会话时防止互相覆盖）。
+ *  Whether a primary session in this process already maintains the status
+ *  file (prevents in-process sessions from overwriting each other). */
+let primarySessionActive = false;
 
 // ---------------------------------------------------------------------------
 // 配置 Config
@@ -213,6 +241,107 @@ function writeStateAtomically(payload: StatusPayload): void {
 	console.error("[pi-status] failed to write state:", lastError);
 }
 
+// ---------------------------------------------------------------------------
+// 状态文件归属 Status-file ownership
+// ---------------------------------------------------------------------------
+
+/**
+ * 构造写盘载荷（统一携带 pid，供归属判定使用）。
+ * Build the on-disk payload (always carrying the pid for ownership checks).
+ */
+function makePayload(
+	status: StatusKind,
+	summary: StatusSummary | null,
+	metrics: Pick<StatusPayload, "cacheHitRate" | "contextPercent">,
+): StatusPayload {
+	return {
+		status,
+		language: currentLanguage,
+		summary,
+		cacheHitRate: metrics.cacheHitRate,
+		contextPercent: metrics.contextPercent,
+		pid: process.pid,
+		ts: Date.now(),
+	};
+}
+
+/** 状态文件中记录的归属信息。Ownership fields recorded in the status file. */
+interface OwnerSnapshot {
+	pid: number | undefined;
+	ts: number | undefined;
+	status: string | undefined;
+}
+
+function readOwnerSnapshot(): OwnerSnapshot {
+	try {
+		const parsed = JSON.parse(readFileSync(STATE_PATH, "utf8")) as Partial<StatusPayload>;
+		return {
+			pid: typeof parsed.pid === "number" ? parsed.pid : undefined,
+			ts: typeof parsed.ts === "number" ? parsed.ts : undefined,
+			status: typeof parsed.status === "string" ? parsed.status : undefined,
+		};
+	} catch {
+		return { pid: undefined, ts: undefined, status: undefined };
+	}
+}
+
+/**
+ * 本进程能否占用状态文件：文件缺失、属于本进程、已被其他进程释放
+ * （closed）或超时未更新时为空闲；否则说明另一个 Pi 进程正在使用它。
+ * Whether this process may own the status file: free when the file is missing,
+ * already ours, released by another process (closed), or stale; otherwise a
+ * live Pi process is using it.
+ */
+function displayFileAvailable(): boolean {
+	const owner = readOwnerSnapshot();
+	if (owner.pid === undefined || owner.pid === process.pid) return true;
+	if (owner.status === "closed" || owner.ts === undefined) return true;
+	return Date.now() - owner.ts >= OWNER_STALE_MS;
+}
+
+/**
+ * 心跳一次：状态文件空闲时接管；已被其他进程接管时让位并冷却一段时间。
+ * One heartbeat tick: claim the file when it is free, keep watching while it
+ * belongs to another process, and back off after being superseded.
+ */
+function heartbeatTick(): void {
+	if (Date.now() < ownershipBackoffUntil) return;
+	if (!ownsDisplay) {
+		if (!displayFileAvailable()) return;
+		// 原主人已退出/崩溃：接手显示，从待命态重新开始。
+		// Previous owner exited or crashed: take over and restart from idle.
+		ownsDisplay = true;
+		currentStatus = "idle";
+		lastSummary = { action: "idle" };
+		writeHeartbeat();
+		return;
+	}
+	if (!displayFileAvailable()) {
+		ownsDisplay = false;
+		ownershipBackoffUntil = Date.now() + OWNERSHIP_BACKOFF_MS;
+		return;
+	}
+	writeHeartbeat();
+}
+
+/**
+ * 会话能否成为悬浮窗的主人：交互式（tui/rpc）会话可以；子代理以 print
+ * 模式 + 内存会话（无会话文件）运行，不得拥有；持久化的 print/json 会话
+ * 保持原有行为。
+ * Whether a session may own the floating status: interactive (tui/rpc)
+ * sessions may; sub-agent children run in print mode with an in-memory session
+ * (no session file) and must not; persisted print/json sessions keep the old
+ * behaviour.
+ */
+function isPrimarySessionCandidate(ctx: ExtensionContext): boolean {
+	if (ctx.mode === "tui" || ctx.mode === "rpc") return true;
+	try {
+		return ctx.sessionManager.getSessionFile() !== undefined;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * 计算缓存命中率与上下文占用（复用 balance 扩展的统计写法）。
  * Compute cache hit rate and context usage (mirrors the balance extension's stats logic).
@@ -287,25 +416,19 @@ function updateStatus(
 	currentStatus = status;
 	if (summary) lastSummary = summary;
 
-	const now = Date.now();
-	const payload: StatusPayload = {
-		status,
-		language: currentLanguage,
-		summary: lastSummary,
-		cacheHitRate: null,
-		contextPercent: null,
-		ts: now,
-	};
+	// 非主人会话（如子代理）只维护内存状态，不写全局状态文件，
+	// 以免把子会话的进度显示成主会话的状态。
+	// Non-owner sessions (e.g. sub-agents) only keep in-memory state; the
+	// global status file belongs to the primary session.
+	if (!ownsDisplay) return;
 
-	if (ctx) {
-		const metrics = computeMetrics(ctx);
-		payload.cacheHitRate = metrics.cacheHitRate;
-		payload.contextPercent = metrics.contextPercent;
-		lastMetrics = metrics;
-	}
-
+	const metrics = ctx
+		? computeMetrics(ctx)
+		: { cacheHitRate: null, contextPercent: null };
+	if (ctx) lastMetrics = metrics;
+	const payload = makePayload(status, lastSummary, metrics);
 	writeStateAtomically(payload);
-	lastWriteAt = now;
+	lastWriteAt = payload.ts;
 }
 
 /**
@@ -314,14 +437,7 @@ function updateStatus(
  * so the floating window can detect liveness.
  */
 function writeHeartbeat(): void {
-	writeStateAtomically({
-		status: currentStatus,
-		language: currentLanguage,
-		summary: lastSummary,
-		cacheHitRate: lastMetrics.cacheHitRate,
-		contextPercent: lastMetrics.contextPercent,
-		ts: Date.now(),
-	});
+	writeStateAtomically(makePayload(currentStatus, lastSummary, lastMetrics));
 }
 
 /** 两个摘要是否相同（用于避免同状态内重复落盘）。
@@ -388,40 +504,79 @@ function dangerousPatternLabel(command: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+	/**
+	 * 本会话是否为主会话：只有主会话才读写全局状态文件。
+	 * 子代理以 print 模式 + 内存会话运行（无会话文件），必须跳过，
+	 * 否则其 session_start / session_shutdown 会停掉主会话的心跳
+	 * 并写入「已关闭」，使悬浮窗误报 Pi 已退出。
+	 * Whether this session is the primary one: only the primary session reads
+	 * and writes the global status file. Sub-agent children run in print mode
+	 * with an in-memory session and must be skipped, otherwise their lifecycle
+	 * events would stop the primary heartbeat and write "closed".
+	 */
+	let isPrimarySession = false;
+
 	// ------------------------------------------------------------------
 	// 会话生命周期 Session lifecycle
 	// ------------------------------------------------------------------
 
 	pi.on("session_start", async (_event, ctx) => {
+		// 子代理等临时会话：完全不接触全局状态。
+		// Ephemeral child sessions never touch the global status.
+		if (!isPrimarySessionCandidate(ctx)) {
+			isPrimarySession = false;
+			return;
+		}
+		// 同进程内已有其他主会话在维护状态时，本会话只保持旁观。
+		// Another primary session in this process already owns the display.
+		if (!isPrimarySession && primarySessionActive) {
+			isPrimarySession = false;
+			return;
+		}
+		isPrimarySession = true;
+		primarySessionActive = true;
+
 		currentLanguage = loadConfig().language;
-		currentStatus = "idle";
-		lastSummary = { action: "idle" };
-		updateStatus("idle", { action: "idle" }, ctx, true);
+		// 状态文件无人占用时才接管；被其他 Pi 进程占用时先旁观，待其退出后接手。
+		// Claim the file only when it is free; otherwise keep watching and take
+		// over once the other Pi process is gone.
+		if (displayFileAvailable()) {
+			ownsDisplay = true;
+			currentStatus = "idle";
+			lastSummary = { action: "idle" };
+			updateStatus("idle", { action: "idle" }, ctx, true);
+		}
 		// 启动心跳：Pi 运行期间持续刷新时间戳。
 		// Start the heartbeat so the floating window sees a live timestamp.
 		if (heartbeatTimer) clearInterval(heartbeatTimer);
-		heartbeatTimer = setInterval(writeHeartbeat, HEARTBEAT_MS);
+		heartbeatTimer = setInterval(() => {
+			if (isPrimarySession) heartbeatTick();
+		}, HEARTBEAT_MS);
 	});
 
 	// 会话关闭（退出/切换/重载）：停止心跳并写入「已关闭」状态。
 	// Session shutdown (quit/switch/reload): stop the heartbeat and write a
 	// "closed" status so the floating window can show that Pi is offline.
 	pi.on("session_shutdown", () => {
+		// 子代理等非主人会话：不得清理主会话的心跳，也不得写入「已关闭」。
+		// Non-owner sessions must not clear the primary heartbeat or write closed.
+		if (!isPrimarySession) return;
+		isPrimarySession = false;
+		primarySessionActive = false;
 		if (heartbeatTimer) {
 			clearInterval(heartbeatTimer);
 			heartbeatTimer = undefined;
 		}
+		if (!ownsDisplay) return;
+		ownsDisplay = false;
+		// 已被其他 Pi 进程接管时不要写「已关闭」，否则会误报。
+		// Do not write closed when another Pi process has taken over the file.
+		if (!displayFileAvailable()) return;
 		currentStatus = "closed";
 		lastSummary = { action: "closed" };
-		const now = Date.now();
-		writeStateAtomically({
-			status: "closed",
-			language: currentLanguage,
-			summary: { action: "closed" },
-			cacheHitRate: null,
-			contextPercent: null,
-			ts: now,
-		});
+		writeStateAtomically(
+			makePayload("closed", { action: "closed" }, { cacheHitRate: null, contextPercent: null }),
+		);
 	});
 
 	// ------------------------------------------------------------------
@@ -431,12 +586,14 @@ export default function (pi: ExtensionAPI) {
 	// agent_start：进入思考状态（开始处理用户输入）。
 	// Agent started: enter thinking state.
 	pi.on("agent_start", (_event, ctx) => {
+		if (!isPrimarySession) return;
 		updateStatus("thinking", { action: "thinking" }, ctx);
 	});
 
 	// agent_settled：完全结束（无重试/压缩/队列后续），回到待命状态。
 	// Agent fully settled (no retry/compaction/queued continuation): back to idle.
 	pi.on("agent_settled", (_event, ctx) => {
+		if (!isPrimarySession) return;
 		updateStatus("idle", { action: "idle" }, ctx);
 	});
 
@@ -447,6 +604,7 @@ export default function (pi: ExtensionAPI) {
 	// thinking_delta：模型思考中。thinking tokens: thinking status.
 	// text_delta：代码/文本输出。text tokens: working status.
 	pi.on("message_update", (event, ctx) => {
+		if (!isPrimarySession) return;
 		const kind = event.assistantMessageEvent.type;
 		if (kind === "thinking_delta" || kind === "thinking_start") {
 			if (currentStatus !== "thinking") {
@@ -470,6 +628,7 @@ export default function (pi: ExtensionAPI) {
 	// tool_execution_start：工具开始执行 → 工作状态，显示工具名。
 	// Tool execution started: working status with the tool name.
 	pi.on("tool_execution_start", (event, ctx) => {
+		if (!isPrimarySession) return;
 		const summary = summaryFromToolArgs(event.toolName, event.args);
 		updateStatus("working", summary, ctx);
 	});
@@ -477,6 +636,7 @@ export default function (pi: ExtensionAPI) {
 	// tool_execution_end：工具执行结束 → 回到工作/继续输出。
 	// Tool execution finished: stay working.
 	pi.on("tool_execution_end", (_event, ctx) => {
+		if (!isPrimarySession) return;
 		if (currentStatus === "working" || currentStatus === "approval" || currentStatus === "asking") {
 			updateStatus("working", { action: "output" }, ctx);
 		}
@@ -490,38 +650,31 @@ export default function (pi: ExtensionAPI) {
 	// Event-bus collaboration: approval extensions broadcast state while
 	// showing their approval dialog.
 	pi.events.on("pi-status:approval", (data) => {
+		if (!isPrimarySession || !ownsDisplay) return;
 		const d = data as { pending?: boolean; reason?: string };
 		if (d && d.pending) {
 			currentStatus = "approval";
 			lastSummary = { action: "approval", name: d.reason || "approval" };
-			writeStateAtomically({
-				status: "approval",
-				language: currentLanguage,
-				summary: lastSummary,
-				cacheHitRate: null,
-				contextPercent: null,
-				ts: Date.now(),
-			});
+			writeStateAtomically(
+				makePayload("approval", lastSummary, lastMetrics),
+			);
 		}
 	});
 	pi.events.on("pi-status:approval-end", () => {
+		if (!isPrimarySession || !ownsDisplay) return;
 		if (currentStatus === "approval") {
 			currentStatus = "working";
 			lastSummary = { action: "output" };
-			writeStateAtomically({
-				status: "working",
-				language: currentLanguage,
-				summary: lastSummary,
-				cacheHitRate: null,
-				contextPercent: null,
-				ts: Date.now(),
-			});
+			writeStateAtomically(
+				makePayload("working", lastSummary, lastMetrics),
+			);
 		}
 	});
 
 	// ask_question 工具被调用 → 询问状态（Pi 向用户提问）。
 	// The ask_question tool is invoked: asking status.
 	pi.on("tool_call", (event, ctx) => {
+		if (!isPrimarySession) return;
 		if (event.toolName === "ask_question") {
 			updateStatus("asking", { action: "asking" }, ctx);
 			return;

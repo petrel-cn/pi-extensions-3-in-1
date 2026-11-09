@@ -13,12 +13,23 @@
 | [pi-status](./pi-status/README.md) | pi extension | Exposes pi's live running state as machine-readable JSON. |
 | [pi-status-window](./pi-status-window/README.md) | Windows app | Always-on-top floating window that shows pi's status on the desktop (polls the JSON from pi-status). |
 
+## Versions
+
+This bundle (`@petrel-cn/pi-extensions` v1.2.0) contains:
+
+| Component | Version |
+|-----------|---------|
+| balance | 1.7.0 |
+| workspace-guard | 2.17.0 |
+| pi-status | 1.3.0 |
+| pi-status-window | 0.2.1 |
+
 ## Install
 
 **Git or npm (whole set):**
 
 ```bash
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.2.0
 pi install npm:@petrel-cn/pi-extensions
 ```
 
@@ -52,7 +63,7 @@ See each component's README for details.
 
 ## Requirements
 
-- pi version: `0.84.x`
+- pi version: `1.5.x`
 - Node.js: `>= 20`
 - Windows 10/11 (for the `pi-status-window` app)
 

@@ -15,7 +15,7 @@ echo Compiling pi-status-window...
   /r:System.Drawing.dll ^
   /r:System.Windows.Forms.dll ^
   /r:System.Runtime.Serialization.dll ^
-  Program.cs Core.cs MainForm.cs
+  Program.cs Core.cs MainForm.cs AssemblyInfo.cs
 
 if errorlevel 1 (
   echo.

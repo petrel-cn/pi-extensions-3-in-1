@@ -67,6 +67,7 @@ Uses the built-in Segoe Fluent Icons font (`SegoeIcons.ttf`) — no external ass
 ## Notes
 
 - In exclusive full-screen games the normal always-on-top window can be hidden (DWM is bypassed); in that case a tray bubble is shown at most once per 60s. Borderless full-screen (the modern default) works normally.
+- **Auto-close** — when pi stays in the "closed" state for `autoCloseSeconds` (default 60 s), the window and its tray icon exit automatically. Set `autoCloseSeconds` to `0` in `%APPDATA%/pi-status-window/config.json` to disable it; the remaining time is shown in the content area while the countdown runs.
 - Balance data comes from the [balance](../balance/) extension; without it, or on a failed query, the window shows "balance unavailable".
 
 ## License

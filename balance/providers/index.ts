@@ -12,6 +12,7 @@
  */
 
 import { fetchDeepseekBalance, type BalanceResult } from "./deepseek";
+import { fetchWorkbuddyBalance } from "./workbuddy";
 import { fetchUnsupportedBalance } from "./stub";
 
 export type { BalanceInfo, BalanceResult } from "./deepseek";
@@ -30,12 +31,31 @@ export interface ProviderCallArgs {
 
 type BalanceFetcher = (args: ProviderCallArgs) => Promise<BalanceResult>;
 
+/** 注册表条目：查询函数 + 是否依赖 API key。Registry entry: fetcher + API-key requirement. */
+interface ProviderEntry {
+	/** 余额查询函数。Balance fetch function. */
+	fetch: BalanceFetcher;
+	/** 无 API key 时是否直接判为不可用；本地数据源（如 wb2api）为 false。
+	 *  Whether the provider is unusable without an API key; false for local sources. */
+	requiresApiKey: boolean;
+}
+
 /**
- * 提供商注册表。键为 pi provider id，值为查询函数。新提供商在此接入。
- * Provider registry. Key = pi provider id, value = fetch function.
+ * 提供商注册表。键为 pi provider id，值为查询函数与认证要求。新提供商在此接入。
+ * Provider registry. Key = pi provider id, value = fetch function + auth requirement.
  */
-const PROVIDERS: Record<string, BalanceFetcher> = {
-	deepseek: (args) => fetchDeepseekBalance(args.apiKey, args.baseUrl, args.signal),
+const PROVIDERS: Record<string, ProviderEntry> = {
+	deepseek: {
+		fetch: (args) => fetchDeepseekBalance(args.apiKey, args.baseUrl, args.signal),
+		requiresApiKey: true,
+	},
+	// WorkBuddy（wb2api 反代网关）：积分从本地面板 /status 或 state.json 读取，无 key 也可用。
+	// WorkBuddy (wb2api gateway): credits come from the local panel /status or
+	// state.json, so an API key is not a hard requirement.
+	workbuddy: {
+		fetch: (args) => fetchWorkbuddyBalance(args.apiKey, args.baseUrl, args.signal),
+		requiresApiKey: false,
+	},
 };
 
 /**
@@ -44,11 +64,18 @@ const PROVIDERS: Record<string, BalanceFetcher> = {
  * Unknown providers fall back to the stub (returns an unsupported error).
  */
 export async function fetchBalance(args: ProviderCallArgs): Promise<BalanceResult> {
-	const fetcher = PROVIDERS[args.provider] ?? fetchUnsupportedBalance;
-	return fetcher(args);
+	const entry = PROVIDERS[args.provider];
+	if (!entry) return fetchUnsupportedBalance(args.provider);
+	return entry.fetch(args);
 }
 
 /** 该提供商是否有专用余额模块。Whether a dedicated balance module exists for the provider. */
 export function supportsProvider(provider: string): boolean {
 	return provider in PROVIDERS;
+}
+
+/** 该提供商的余额查询是否依赖 API key（未知提供商按依赖处理）。
+ *  Whether the provider's balance lookup requires an API key (unknown providers: yes). */
+export function providerRequiresApiKey(provider: string): boolean {
+	return PROVIDERS[provider]?.requiresApiKey ?? true;
 }

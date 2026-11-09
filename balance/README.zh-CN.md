@@ -11,8 +11,8 @@
 ## 特性
 
 - **footer 显示** —— 在 footer 的统计行、上下文用量指示之后显示余额。
-- **模块化后端** —— 前端只负责显示；每个提供商通过分发表实现各自的余额查询。已内置 `deepseek` 模块，其他提供商回退到 stub（显示 `💰 N/A`）。如需显示其他渠道的余额，可自行添加。
-- **多币种** —— 货币符号按接口返回自动识别（`CNY → ￥`、`USD → $`）；多币种全部显示，空格分隔。
+- **模块化后端** —— 前端只负责显示；每个提供商通过分发表实现各自的余额查询。已内置 `deepseek`（货币余额）与 `workbuddy`（wb2api 积分）模块，其他提供商回退到 stub（显示 `💰 N/A`）。新增提供商只需注册一个模块。
+- **多币种 / 积分** —— 货币符号按接口返回自动识别（`CNY → ￥`、`USD → $`）；多币种全部显示，空格分隔。WorkBuddy 积分显示为 `4451c`（无货币符号），只汇总**可用账号**（未禁用、未暂停、积分高于 `credit_floor`）。
 - **可配置刷新** —— 默认 60s，可通过 `/balance-interval` 选择 30s–300s；持久化到扩展旁的 `config.json`。
 - **机器可读输出** —— 额外写入纯金额（无 emoji）到 `%TEMP%/pi-balance.json`，供其他工具或 [pi-status-window](../../pi-status-window/) 悬浮窗消费。
 - **稳健的状态写入** —— `%TEMP%/pi-balance.json` 采用原子写入（临时文件 + 重命名）。Windows 上并发轮询的读者会短暂持有该文件，重命名失败时按短退避（3/10/25 ms）重试，而不是直接报错。
@@ -24,11 +24,12 @@
 balance/
 ├── index.ts          # 入口：footer 渲染 + 定时刷新 + 模型切换响应 + /balance-interval 命令
 ├── i18n.ts           # 中英双语字典与 t()
-├── config.ts         # 刷新间隔配置读写（默认 60s，钳制 30s–300s）
-├── config.json       # 配置持久化（首次运行生成，已 git-ignore）
+├── config.ts         # 刷新间隔 + workbuddy 数据源配置读写（默认 60s，钳制 30s–300s）
+├── config.json       # 配置持久化（刷新间隔 + workbuddy.panelDir/stateFile，首次运行生成）
 └── providers/
-    ├── index.ts      # 分发表：provider → 查询模块（新提供商在此注册）
+    ├── index.ts      # 分发表：provider → 查询模块（含是否需要 API key）
     ├── deepseek.ts   # deepseek 余额查询（GET /user/balance，Bearer 认证）
+    ├── workbuddy.ts  # WorkBuddy 积分查询（优先 GET /status，回退面板 state.json）
     └── stub.ts       # 其他 provider 占位（返回 unsupported）
 ```
 
@@ -46,7 +47,7 @@ pi install ./balance
 
 ```bash
 pi install npm:@petrel-cn/balance     # 或
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.2.0
 ```
 
 > 扩展拥有完整系统权限。仅安装来源可信的扩展。
@@ -65,11 +66,17 @@ pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 
 ```json
 {
-  "refreshIntervalMs": 60000
+  "refreshIntervalMs": 60000,
+  "workbuddy": {
+    "panelDir": "",
+    "stateFile": ""
+  }
 }
 ```
 
 - `refreshIntervalMs` —— 刷新间隔（毫秒）。允许范围 30s–300s；超出会被钳制到该范围。
+- `workbuddy.panelDir` —— 本地 wb2api 面板目录。用于解析其 `config.json`（读取 API key 与 `state_file`）以及默认的 `data/state.json`。
+- `workbuddy.stateFile` —— 显式指定面板状态文件路径；留空表示按面板配置解析。
 
 ## 语言与国际化
 
@@ -89,7 +96,7 @@ pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 
 ## 兼容性
 
-- pi 版本：已在 `0.84.x` 上测试（使用 `setFooter`、`modelRegistry.getProviderAuth`）。
+- pi 版本：已在 `1.5.x` 上测试（使用 `setFooter`、`modelRegistry.getProviderAuth`）。
 - Node.js：`>= 20`。
 
 ## 非交互模式行为
@@ -99,7 +106,7 @@ pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
 
 ## 说明
 
-- 余额查询为 `GET {baseUrl}/user/balance`；API key 从 pi 的认证存储（`ctx.modelRegistry.getProviderAuth`）解析，不硬编码。
+- deepseek 余额查询为 `GET {baseUrl}/user/balance`；WorkBuddy 积分查询为 `GET {baseUrl}/status`，并以面板 `state.json` 为回退。凭证从面板配置或 pi 的认证存储（`ctx.modelRegistry.getProviderAuth`）解析，不硬编码。
 - 查询失败显示警告色的 `💰 获取失败`；无 key 或不支持的提供商显示 `💰 N/A`。
 - 缓存命中率按整个会话汇总计算：`cacheRead / (input + cacheRead + cacheWrite)`，与 `pi-status` 一致。
 

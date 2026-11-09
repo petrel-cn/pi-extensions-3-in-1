@@ -61,6 +61,8 @@ namespace PiStatusWindow
         private bool _pinned;
         private bool _collapsed;                 // minimized to title bar only
         private bool _mouseDown;
+        private DateTime? _closedSince;          // first moment Pi was seen closed
+        private int _autoCloseLeft;              // remaining seconds; 0 = not shown
         private Point _dragStart;
         private bool _dragging;
         private string _hoverBtn;                // "pin" | "min" | "close" | null
@@ -193,9 +195,7 @@ namespace PiStatusWindow
             ToolStripMenuItem exitItem = new ToolStripMenuItem(_str.TrayExit);
             exitItem.Click += delegate(object s, EventArgs e)
             {
-                _pollTimer.Stop();
-                _tray.Visible = false;
-                Application.Exit();
+                CloseWindow();
             };
             menu.Items.Add(showItem);
             menu.Items.Add(exitItem);
@@ -227,9 +227,14 @@ namespace PiStatusWindow
             {
                 // 心跳超时检测：状态文件 ts 超过 15 秒未更新说明 Pi 进程已退出
                 // （扩展每 5 秒心跳一次）。超时则强制显示「已关闭」。
+                // 仅在 ts 有效时才判定：缺失/非法的 ts（默认为 0）不能说明
+                // Pi 已退出，否则不写 ts 的写入方会被误判并触发自动关闭。
                 // Heartbeat timeout: if the status file timestamp is older than
-                // 15 s, the Pi process is gone — force the closed state.
-                bool heartbeatDead = (DateTime.UtcNow - UnixTime(newStatus.ts)).TotalSeconds > 15;
+                // 15 s, the Pi process is gone — force the closed state. Only
+                // judge when a real timestamp exists; a missing/invalid ts is
+                // "unknown", not "exited".
+                bool heartbeatDead = newStatus.ts > 0 &&
+                    (DateTime.UtcNow - UnixTime(newStatus.ts)).TotalSeconds > 15;
                 if (heartbeatDead && newStatus.status != "closed")
                 {
                     newStatus.status = "closed";
@@ -262,10 +267,69 @@ namespace PiStatusWindow
             }
 
             if (changed) Invalidate();
+
+            // 状态文件缺失/不可读时 statusKnown=false，看门狗重置计时而非沿用旧状态。
+            // A missing/unreadable status file passes statusKnown=false so the
+            // watchdog resets instead of trusting the last known state.
+            UpdateAutoClose(newStatus != null);
         }
+
+        /// <summary>Auto-close watchdog. While Pi stays closed, count the
+        ///   elapsed time and display the remaining seconds; once the configured
+        ///   delay is reached, close the window (and exit the process). Any
+        ///   non-closed status cancels the countdown, so a restarted Pi keeps
+        ///   the window alive. A delay of 0 disables the feature. statusKnown is
+        ///   false when the status file could not be read: the countdown then
+        ///   pauses instead of trusting the last known state.
+        ///   自动退出看门狗：Pi 持续为「已关闭」时累计时长，并在内容区显示
+        ///   剩余秒数；达到配置的时长后关闭窗口并退出进程。任何非「已关闭」
+        ///   状态都会取消倒计时，因此 Pi 重启后窗口继续存活。配置为 0 时禁用。
+        ///   statusKnown=false（状态文件不可读）时重置计时，不沿用旧状态。</summary>
+        private void UpdateAutoClose(bool statusKnown)
+        {
+            int limit = _config.AutoCloseSeconds;
+
+            if (!statusKnown || _status.status != "closed" || limit <= 0)
+            {
+                _closedSince = null;
+                if (_autoCloseLeft != 0)
+                {
+                    _autoCloseLeft = 0;
+                    Invalidate();
+                }
+                return;
+            }
+
+            if (!_closedSince.HasValue) _closedSince = DateTime.UtcNow;
+
+            double elapsed = (DateTime.UtcNow - _closedSince.Value).TotalSeconds;
+            if (elapsed >= limit)
+            {
+                CloseWindow();
+                return;
+            }
+
+            int left = (int)Math.Ceiling(limit - elapsed);
+            if (left < 1) left = 1;
+            if (left != _autoCloseLeft)
+            {
+                _autoCloseLeft = left;
+                Invalidate();
+            }
+        }
+
+        // DateTime.MaxValue 对应的 Unix 毫秒数（9999-12-31T23:59:59.999Z）。
+        // 超出此范围的时间戳无法由 DateTime 表示。
+        private const long MaxUnixMs = 253402300799999L;
 
         private static DateTime UnixTime(long ts)
         {
+            // 状态文件可能来自第三方写入方，时间戳单位或数值可能异常。
+            // 缺失/非法/超范围的 ts 一律视为「未知心跳」返回当前时间，避免
+            // AddMilliseconds 抛异常从 Timer.Tick 逃逸而终止进程。
+            // Timestamps outside DateTime's range are treated as an unknown
+            // heartbeat (return "now") instead of throwing out of the tick.
+            if (ts <= 0 || ts > MaxUnixMs) return DateTime.UtcNow;
             return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMilliseconds(ts);
         }
 
@@ -657,7 +721,13 @@ namespace PiStatusWindow
                     return _str.BodyApproval + " (" + _status.summary.name + ")";
                 return _str.BodyApproval;
             }
-            if (_status.status == "closed") return _str.BodyClosed;
+            if (_status.status == "closed")
+            {
+                if (_autoCloseLeft > 0)
+                    return _str.BodyClosed + "\n" +
+                        string.Format(_str.AutoCloseHint, _autoCloseLeft);
+                return _str.BodyClosed;
+            }
             if (_status.status == "working")
             {
                 if (_status.HasSummary)

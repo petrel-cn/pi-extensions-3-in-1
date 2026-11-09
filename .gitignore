@@ -10,5 +10,9 @@ node_modules/
 .DS_Store
 dist/
 
-# Built binary (distributed via GitHub Releases, not the repo)
+# Local-only maintenance scripts (not distributed)
+/scripts/
+
+# Built binaries (distributed via GitHub Releases, not the repo)
 pi-status-window/bin/
+pi-status/bin/

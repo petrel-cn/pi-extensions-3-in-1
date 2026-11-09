@@ -61,7 +61,7 @@ Then `/reload` in pi to activate. When published on npm or git, you will also be
 
 ```bash
 pi install npm:@petrel-cn/pi-status     # or
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.2.0
 ```
 
 > Extensions run with full system permissions. Only install sources you trust.
@@ -85,11 +85,13 @@ The language is persisted to `config.json` next to the extension.
   "summary": { "action": "tool", "name": "npm test -- --watch" },
   "cacheHitRate": 58.8,
   "contextPercent": 15,
+  "pid": 12345,
   "ts": 1750000000000
 }
 ```
 
 - `summary` is a semantic structure, localized by the floating window using the current `language`.
+- `pid` identifies the pi process that owns the status file. Only one owner per machine maintains the state: a process with a fresh heartbeat (<12 s) is observed rather than overwritten; ownership is taken over when the current owner exits (`closed`) or its heartbeat is stale (>=12 s), with a 10 s cooldown after yielding.
 - Writes are atomic (temp file + rename) so the floating window never reads a partial JSON. A rename that fails because the polling reader is holding the file open is retried with a short backoff (3/10/25 ms).
 - While pi is running, the file's timestamp is refreshed every 5 seconds (heartbeat), so a consumer can detect a killed or crashed pi without relying on event ordering.
 
@@ -115,16 +117,19 @@ The `language` field tells the floating window which locale to render the summar
 
 The extension uses no UI API (`notify` / `setStatus` / `setWidget` / `setFooter`), so status writing keeps working under `json` / `print` / `rpc`.
 
+Temporary sessions (`print` mode with no session file, such as SDK sub-agents) are treated as non-owner sessions: they do not write state, do not start a heartbeat, and never write `closed` on exit. This prevents a finished sub-agent from replacing the parent's display or making the floating window report pi as closed.
+
 ## Compatibility
 
-- pi version: tested against `0.84.x`.
+- pi version: tested against `1.5.x`.
 - Node.js: `>= 20`.
 
 ## Notes
 
 - Approval state prefers the `pi-status:approval` event bus from [workspace-guard](../workspace-guard/); without that extension it falls back to heuristic detection of dangerous bash commands, which is less timely.
 - Balance data is produced by the [balance](../balance/) extension; this extension never queries an API itself.
-- The floating window is a separate project and is deployed on its own.
+- The floating window is a separate Windows project; see [pi-status-window](../pi-status-window/) to build it or download a pre-built binary from the Releases page.
+- Multiple pi processes can share one state file: the owner is re-elected by heartbeat, and the floating window ignores the `pid` field.
 - The rename retry sleeps synchronously via `Atomics.wait`, whose resolution is bounded by the system timer (about 15 ms on Windows). In the worst case (three consecutive failures) the main thread is blocked for roughly 40–60 ms; with a heartbeat every 5 s this is not observable in practice.
 
 ## License

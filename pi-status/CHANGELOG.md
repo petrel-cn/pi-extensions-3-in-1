@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-22
+
+### Fixed
+
+- **Sub-agent shutdown no longer makes the floating window report pi as closed.** Sub-agents (SDK runner, same process) can load the parent session's extensions; the extension loader caches factories per cwd, so parent and child shared the same module-level heartbeat timer and status. A child `session_shutdown` cleared the parent timer and wrote `status=closed`, leaving the window stuck on "closed" until the next parent event.
+  - Temporary sessions (`print` mode with no session file, such as SDK sub-agents) are now recognized as non-owner sessions: they do not register writes, do not start a heartbeat, and never write `closed` on exit. Only one owner session per process maintains the state.
+  - The status JSON gains a `pid` field. Before writing, ownership is checked: while another process has a fresh heartbeat (<12 s) this process observes; it takes over when the other process is `closed` or its heartbeat is stale (>=12 s), with a 10 s cooldown after yielding to avoid contention.
+  - Heartbeats moved to `heartbeatTick`; `session_shutdown` writes `closed` only when this process is the owner.
+  - Non-owner sessions keep their state in memory only and never touch the shared file.
+
 ## [1.2.0] - 2026-09-29
 
 ### Fixed

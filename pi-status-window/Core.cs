@@ -155,6 +155,7 @@ namespace PiStatusWindow
         public string TrayExit;
         public string Tooltip;
         public string StatusUnknown;
+        public string AutoCloseHint;     // {0} = remaining seconds
 
         public static Strings For(string lang)
         {
@@ -190,6 +191,7 @@ namespace PiStatusWindow
             s.TrayExit = "Exit";
             s.Tooltip = "Pi status";
             s.StatusUnknown = "…";
+            s.AutoCloseHint = "Window closes in {0}s";
             return s;
         }
 
@@ -221,6 +223,7 @@ namespace PiStatusWindow
             s.TrayExit = "退出";
             s.Tooltip = "Pi 状态";
             s.StatusUnknown = "…";
+            s.AutoCloseHint = "窗口将在 {0} 秒后自动关闭";
             return s;
         }
     }
@@ -235,6 +238,7 @@ namespace PiStatusWindow
         public int X = -1;   // -1 = unset
         public int Y = -1;
         public bool Pinned = true;
+        public int AutoCloseSeconds = 60;   // 0 = never auto-close
 
         private static string ConfigPath()
         {
@@ -259,6 +263,8 @@ namespace PiStatusWindow
                     p.TryGetInt("x", ref c.X);
                     p.TryGetInt("y", ref c.Y);
                     p.TryGetBool("pinned", ref c.Pinned);
+                    p.TryGetInt("autoCloseSeconds", ref c.AutoCloseSeconds);
+                    if (c.AutoCloseSeconds < 0) c.AutoCloseSeconds = 0;
                 }
             }
             catch (Exception) { /* fall back to defaults */ }
@@ -277,6 +283,7 @@ namespace PiStatusWindow
                   .Append(",\"x\":").Append(X)
                   .Append(",\"y\":").Append(Y)
                   .Append(",\"pinned\":").Append(Pinned ? "true" : "false")
+                  .Append(",\"autoCloseSeconds\":").Append(AutoCloseSeconds)
                   .Append("}");
                 File.WriteAllText(ConfigPath(), sb.ToString());
             }

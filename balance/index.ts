@@ -1,7 +1,7 @@
 /**
  * 账户余额显示扩展。Account balance display extension.
  *
- * 版本：v1.6（与 CHANGELOG.md 顶部一致）
+ * 版本：v1.7（与 CHANGELOG.md 顶部一致）
  *
  * 在底部 footer 中显示当前模型所属提供商的账户余额，
  * 紧跟上下文用量指示（如 "0.0%/1.0M (auto)"）之后。
@@ -30,7 +30,7 @@ import { truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui"
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { fetchBalance, supportsProvider } from "./providers/index";
+import { fetchBalance, providerRequiresApiKey, supportsProvider } from "./providers/index";
 import { loadConfig, saveConfig, INTERVAL_OPTIONS_MS } from "./config";
 import { t } from "./i18n.ts";
 
@@ -215,7 +215,9 @@ export default function (pi: ExtensionAPI) {
 				console.log("[balance] auth resolution failed:", error);
 			}
 
-			if (!apiKey) {
+			// 本地数据源提供商（如 workbuddy）不依赖 API key，无 key 时仍可查询。
+			// Local-source providers (e.g. workbuddy) do not need an API key.
+			if (!apiKey && providerRequiresApiKey(provider)) {
 				balanceText = "💰 N/A";
 				balanceAmount = "";
 				balanceKind = "unsupported";
@@ -497,7 +499,9 @@ export default function (pi: ExtensionAPI) {
 			const index = options.indexOf(choice);
 			if (index < 0) return;
 			const newMs = INTERVAL_OPTIONS_MS[index];
-			saveConfig({ refreshIntervalMs: newMs });
+			// 合并写入，保留 workbuddy 等其他配置字段。
+			// Merge on save so other fields (e.g. workbuddy) are preserved.
+			saveConfig({ ...loadConfig(), refreshIntervalMs: newMs });
 			restartTimer(ctx);
 			ctx.ui.notify(`余额刷新间隔 Balance refresh interval: ${newMs / 1000} 秒 (s)`, "info");
 		},

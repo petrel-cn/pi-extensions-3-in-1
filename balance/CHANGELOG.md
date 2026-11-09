@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-22
+
+### Added
+
+- **WorkBuddy (wb2api) credits provider** — `workbuddy` is now supported alongside `deepseek`. Credits are read from the local wb2api panel and summed across **available accounts** only (`!disabled && !paused && credits > credit_floor`), then rendered as `4451c` (no currency symbol).
+  - New `providers/workbuddy.ts`: prefers `GET {baseUrl}/status` (gateway in-memory state with `disabled` / `paused` / `credit_floor`) and falls back to the panel `state.json` (path resolved from the panel `config.json` `state_file`, default `{panelDir}/data/state.json`). Bearer credentials come from the panel `config.json` `api_key`, falling back to the provider auth.
+  - `providers/index.ts`: registry entries gain `requiresApiKey` plus a `providerRequiresApiKey()` export; stub calls now receive an explicit provider.
+  - `index.ts`: missing-API-key handling respects `providerRequiresApiKey()` so local data sources are no longer reported as `N/A`; `/balance-interval` saves merge into the existing config instead of overwriting the `workbuddy` section.
+  - `config.ts`: new `workbuddy.panelDir` and `workbuddy.stateFile` settings. An empty `panelDir` means unconfigured; the provider then reports `N/A` instead of using a hard-coded local path.
+
 ## [1.6.0] - 2026-09-29
 
 ### Fixed

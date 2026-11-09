@@ -13,12 +13,23 @@
 | [pi-status](./pi-status/README.md) | pi 扩展 | 将 pi 的实时运行状态以机器可读 JSON 输出。 |
 | [pi-status-window](./pi-status-window/README.md) | Windows 程序 | 置顶悬浮窗，在桌面显示 pi 状态（轮询 pi-status 的 JSON）。 |
 
+## 版本
+
+本合集（`@petrel-cn/pi-extensions` v1.2.0）包含：
+
+| 组件 | 版本 |
+|------|------|
+| balance | 1.7.0 |
+| workspace-guard | 2.17.0 |
+| pi-status | 1.3.0 |
+| pi-status-window | 0.2.1 |
+
 ## 安装
 
 **Git 或 npm（整套）：**
 
 ```bash
-pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.1.0
+pi install git:github.com/petrel-cn/pi-extensions-3-in-1@v1.2.0
 pi install npm:@petrel-cn/pi-extensions
 ```
 
@@ -52,7 +63,7 @@ balance ──────────写 %TEMP%/pi-balance.json ──▶  pi-s
 
 ## 环境要求
 
-- pi 版本：`0.84.x`
+- pi 版本：`1.5.x`
 - Node.js：`>= 20`
 - Windows 10/11（`pi-status-window` 程序需要）
 

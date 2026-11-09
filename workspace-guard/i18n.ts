@@ -20,7 +20,7 @@ const messages: Record<Lang, Record<string, string>> = {
   zh: {
     // /wsguard 命令与开关
     "cmd.wsguard.desc":
-      "工作区写审批：on 启用 / off 关闭 / status 状态 / lang <zh|en> 切换语言",
+      "工作区写审批：on 启用 / off 关闭 / status 状态 / reset 清空会话放行 / lang <zh|en> 切换语言",
     "notify.enabled": "✅ 工作区写审批已启用",
     "notify.disabled": "⏸ 工作区写审批已关闭（写操作不再拦截）",
     "status.desc.env": "（由环境变量 PI_WORKSPACE_GUARD 控制：{value}，state.json 不生效）",
@@ -31,18 +31,31 @@ const messages: Record<Lang, Record<string, string>> = {
     "status.disabled": "⏸ 工作区写审批：已关闭（写操作不拦截）{stateDesc}",
     "notify.lang.zh": "已切换为中文（zh）",
     "notify.lang.en": "已切换为英文（en）",
+    "notify.reset": "已清空本次会话的放行范围",
+    "status.scopes": "本次会话已放行：\n{list}",
+    "status.noScopes": "本次会话尚未放行任何范围",
+    "status.allowDirs": "额外允许目录（免审批）：\n{list}",
+    "status.noAllowDirs": "额外允许目录：无（仅工作区）",
 
     // 审批选项
     "opt.allowOnce": "✅ 允许一次",
     "opt.allowSession": "🔄 本次会话允许",
+    "opt.allowSessionWithScope": "🔄 本次会话允许（{scope}）",
     "opt.deny": "🚫 拒绝",
     "opt.yes": "✅ 允许",
     "opt.no": "🚫 拒绝",
 
+    // 会话放行范围描述（目录级含子目录；盘符根/一级目录降级为单文件）
+    "scope.dir": "{path}（含所有子目录）",
+    "scope.file": "仅此文件 {path}",
+    "scope.fileShort": "仅此文件",
+    "scope.count": "{n} 处范围",
+    "scope.block": "本次会话放行范围：\n{list}\n\n",
+
     // write / edit 工作区外写入
     "write.noUI": "工作区外写入被拒绝（无 UI）：{path}",
     "write.selectTitle":
-      "⚠️ 写文件目标超出工作区：\n\n📄 {path}\n\n工作区：{cwd}\n\n如何处理？",
+      "⚠️ 写文件目标超出工作区：\n\n📄 {path}\n\n{scope}工作区：{cwd}\n\n如何处理？",
     "write.denied": "工作区外写入被用户拒绝：{path}",
 
     // 危险命令
@@ -61,8 +74,13 @@ const messages: Record<Lang, Record<string, string>> = {
     "outside.noUI": "工作区外写入被拒绝（无 UI）：{paths}",
     "outside.effectPrefix": "📌 命令作用：{effect}\n\n",
     "outside.selectTitle":
-      "⚠️ 检测到工作区外写入：\n\n{effect}命令：{command}\n\n目标路径：\n{paths}\n\n工作区：{cwd}\n\n如何处理？",
+      "⚠️ 检测到工作区外写入：\n\n{effect}命令：{command}\n\n目标路径：\n{paths}\n\n{scope}工作区：{cwd}\n\n如何处理？",
     "outside.denied": "工作区外写入被用户拒绝：{paths}",
+    "outside.unknownTitle":
+      "⚠️ 写入目标无法静态判定（含变量/命令替换/~）：\n\n目标：\n{targets}\n\n命令：{command}\n工作区：{cwd}\n\n如何处理？",
+    "outside.unknownNone": "（命令中含变量或表达式，未能提取到具体路径）",
+    "outside.noUIUnknown": "写入类命令被拒绝（无 UI，目标无法静态判定）：{command}",
+    "outside.deniedUnknown": "写入类命令被用户拒绝（目标无法静态判定）",
 
     // 风险评估等级显示
     "risk.low": "低",
@@ -78,7 +96,7 @@ const messages: Record<Lang, Record<string, string>> = {
   },
   en: {
     "cmd.wsguard.desc":
-      "Workspace write approval: on enable / off disable / status show / lang <zh|en> switch language",
+      "Workspace write approval: on enable / off disable / status show / reset clear session allowances / lang <zh|en> switch language",
     "notify.enabled": "✅ Workspace write approval enabled",
     "notify.disabled": "⏸ Workspace write approval disabled (writes no longer intercepted)",
     "status.desc.env": "(controlled by env PI_WORKSPACE_GUARD: {value}; state.json not effective)",
@@ -89,16 +107,28 @@ const messages: Record<Lang, Record<string, string>> = {
     "status.disabled": "⏸ Workspace write approval: OFF (writes not intercepted) {stateDesc}",
     "notify.lang.zh": "Language switched to Chinese (zh)",
     "notify.lang.en": "Language switched to English (en)",
+    "notify.reset": "Session-scoped allowances cleared",
+    "status.scopes": "Allowed for this session:\n{list}",
+    "status.noScopes": "No session-scoped allowances yet",
+    "status.allowDirs": "Extra allowed directories (no approval):\n{list}",
+    "status.noAllowDirs": "Extra allowed directories: none (workspace only)",
 
     "opt.allowOnce": "✅ Allow once",
     "opt.allowSession": "🔄 Allow this session",
+    "opt.allowSessionWithScope": "🔄 Allow this session ({scope})",
     "opt.deny": "🚫 Deny",
     "opt.yes": "✅ Allow",
     "opt.no": "🚫 Deny",
 
+    "scope.dir": "{path} (including subdirectories)",
+    "scope.file": "this file only: {path}",
+    "scope.fileShort": "this file only",
+    "scope.count": "{n} locations",
+    "scope.block": "Scope granted by \"allow this session\":\n{list}\n\n",
+
     "write.noUI": "Outside-workspace write rejected (no UI): {path}",
     "write.selectTitle":
-      "⚠️ Write target is outside the workspace:\n\n📄 {path}\n\nWorkspace: {cwd}\n\nHow to proceed?",
+      "⚠️ Write target is outside the workspace:\n\n📄 {path}\n\n{scope}Workspace: {cwd}\n\nHow to proceed?",
     "write.denied": "Outside-workspace write denied by user: {path}",
 
     "danger.noUI": "Dangerous command rejected (no UI): {label}",
@@ -116,8 +146,14 @@ const messages: Record<Lang, Record<string, string>> = {
     "outside.noUI": "Outside-workspace write rejected (no UI): {paths}",
     "outside.effectPrefix": "📌 Command effect: {effect}\n\n",
     "outside.selectTitle":
-      "⚠️ Outside-workspace write detected:\n\n{effect}Command: {command}\n\nTarget paths:\n{paths}\n\nWorkspace: {cwd}\n\nHow to proceed?",
+      "⚠️ Outside-workspace write detected:\n\n{effect}Command: {command}\n\nTarget paths:\n{paths}\n\n{scope}Workspace: {cwd}\n\nHow to proceed?",
     "outside.denied": "Outside-workspace write denied by user: {paths}",
+    "outside.unknownTitle":
+      "⚠️ Write target cannot be determined statically (variables/command substitution/~):\n\nTargets:\n{targets}\n\nCommand: {command}\nWorkspace: {cwd}\n\nHow to proceed?",
+    "outside.unknownNone":
+      "(command contains variables or expressions; no concrete path extracted)",
+    "outside.noUIUnknown": "Write-like command rejected (no UI; targets not statically known): {command}",
+    "outside.deniedUnknown": "Write-like command denied by user (targets not statically known)",
 
     "risk.low": "Low",
     "risk.medium": "Medium",

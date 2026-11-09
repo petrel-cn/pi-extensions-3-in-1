@@ -6,6 +6,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-11-02
+
+### Fixed
+
+- **A `cd` prefix could bypass write approval.** Relative targets were always resolved against the tool cwd, ignoring `cd` inside the command, so `cd <outside> && printf x >> rel.txt` wrote outside the workspace without prompting. PowerShell `Set-Location` had the same gap.
+  - Command segmentation now records the separator after each segment (`;`, `&&`, `||`, `|`, `|&`, newline).
+  - Statically resolvable `cd` / `chdir` / `Set-Location` / `sl` targets (absolute, relative, `~`, MSYS `/d/...`, `-Path` / `-LiteralPath`) produce candidate bases; because a failed `cd` leaves the cwd unchanged, both the old and the new base stay candidates and any candidate outside the workspace triggers approval.
+  - Non-resolvable forms (`cd -`, bare `cd`, `$VAR`, `$(pwd)`, `pushd` / `popd`, multiple arguments, a single-root `/tmp`, non-leading `cd`, quoted `& 'Set-Location'`) mark subsequent relative targets as unjudgeable and force approval. PowerShell uses the same conservative rule.
+  - Candidate expansion is capped (`MAX_CD_BASES = 8`).
+
+## [2.16.0] - 2026-11-02
+
+### Added
+
+- **`allowWriteDirs` in `config.json`** — a `string[]` of extra directories that are exempt from write approval, with `~/` expansion and a union with `PI_ALLOW_WRITE_DIRS`. Entries are normalized and de-duplicated (case-insensitive on Windows); invalid entries are ignored. Whitelisted directories only skip write approval — dangerous commands still prompt. `/wsguard status` shows the effective list.
+
+## [2.15.0] - 2026-10-27
+
+### Fixed
+
+- **Unresolvable write targets are now reported instead of silently allowed.** Targets containing `$VAR`, `${VAR}`, `$1`, `$(cmd)`, backticks or `%VAR%` were previously dropped, which could let `cp a.txt $DEST/b.txt` through without approval.
+- `~` / `~/x` / `~\x` are expanded to the home directory; `~user/x` is treated as unjudgeable. Pure punctuation tokens (such as a leftover `<`) are no longer treated as paths.
+- Both bash and PowerShell now surface an "unknown targets" dialog with only **Allow once / Deny** (no session approval, since the scope is unknown).
+
+## [2.14.0] - 2026-10-27
+
+### Changed
+
+- **"Allow this session" is now directory-scoped.** The old implementation keyed approval by the exact file path or the exact command string, so a slightly different command never matched. Approvals now create path trust scopes: a file target trusts its parent directory and all children; a directory target trusts that directory; drive roots and first-level directories degrade to the single file. Scopes are separator-bounded and case-insensitive on Windows, are cleared on `session_start`, and can be reset with `/wsguard reset`. Dangerous commands still offer only allow-once / deny and are never cached.
+
+## [2.13.0] - 2026-10-22
+
+### Changed
+
+- **Approval reasoning level is provider-neutral.** Approval requests now use `reasoning: "low"` through `streamSimple(...).result()` instead of the `openai-completions`-only `reasoningEffort` field, so the lower thinking level applies to every provider (pi clamps it against each model's `thinkingLevelMap`). Non-reasoning models receive no reasoning option.
+
+## [2.12.0] - 2026-10-22
+
+### Fixed
+
+- **Approval LLM requests no longer fall straight back to the local template on a transient timeout.** Timeouts, `TimeoutError`, and parse failures now get one retry (single-attempt timeout stays 30 s, retry timeout 20 s), and the truncated-output retry budget is only raised when the model actually hit `length`.
+- Approval requests use a low thinking level instead of inheriting the session's thinking budget.
+- Diagnostic logs now distinguish "timeout retry still failed" from "retry still failed".
+
+## [2.11.0] - 2026-10-22
+
+### Added
+
+- **PowerShell tool coverage.** `powershell` write/delete operations were previously not intercepted at all. The extension now detects dangerous cmdlets (`Remove-*`, `Clear-Content`, `Set-Content`, `Move-Item`, `Copy-Item`, `Out-File`, `[IO.File]::Delete`, `Invoke-Expression`, `Stop-Process`, ...), extracts write targets from `-Path` / `-LiteralPath` / `-Destination` / `-FilePath` / `-DestinationPath` and redirections, and prompts for outside-workspace writes or unjudgeable targets. Key collisions with bash commands are avoided by a `powershell::` cache prefix.
+
+## [2.10.0] - 2026-10-22
+
+### Added
+
+- **Failure diagnostics** — on a permanent LLM failure, a compact entry is appended to `llm-diag.log` (rotated at 256 KB) with the stop reason, output/reasoning lengths, budget and elapsed time.
+- **One automatic retry** — network/HTTP errors retry with the original budget; output truncated by reasoning or `length` retries with a budget up to `min(12000, model max)`. Timeouts do not retry.
+
+## [2.9.0] - 2026-10-22
+
+### Fixed
+
+- **Long commands no longer lose their LLM explanation.** Reasoning tokens share the output budget with the answer, so the previous hard-coded `maxTokens: 500` could leave no room for the JSON body. The budget is now `min(6000, model max)` and the timeout is 30 s.
+
+## [2.8.0] - 2026-10-18
+
+### Changed
+
+- **Tighter approval dialog budgets:** command preview `12 + 3` lines, target-path list at most 4 lines (first 3 + marker), and the "command effect" block at most 7 lines (first 6 + marker). Removed a blank line from the outside-write template.
+
+## [2.7.0] - 2026-10-18
+
+### Fixed
+
+- **Long "command effect" bullet lists no longer overflow the dialog.** Locally generated effect summaries are clamped: 8 lines or fewer are shown in full; longer lists show the first 6 lines plus an omission marker and the last line. A 60-line command's prompt drops from 73 to 38 rows.
+
 ## [2.6.0] - 2026-09-25
 
 ### Added
